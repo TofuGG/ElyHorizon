@@ -4182,16 +4182,20 @@ impl Launcher {
             let target = self.sign_in_target.as_ref().map(|a| a.uuid.clone());
             let targeted = target.is_some();
             let mut actions = div().flex().gap(px(4.));
-            
+
             // When adding a new account (not re-signing), show ely.by button
             if !targeted {
                 actions = actions.child(
-                    button("sign-in-elyby", tr("Sign in with ely.by"), Kind::Secondary, &t).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.begin_elyby_sign_in();
-                            cx.notify();
-                        }),
-                    ),
+                    button(
+                        "sign-in-elyby",
+                        tr("Sign in with ely.by"),
+                        Kind::Secondary,
+                        &t,
+                    )
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.begin_elyby_sign_in();
+                        cx.notify();
+                    })),
                 );
             } else {
                 // Re-signing an existing account
@@ -4205,7 +4209,7 @@ impl Launcher {
                     },
                 )));
             }
-            
+
             if targeted {
                 actions = actions.child(
                     button("sign-in-cancel-target", "Cancel", Kind::Ghost, &t).on_click(

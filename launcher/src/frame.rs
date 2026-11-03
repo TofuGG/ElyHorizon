@@ -558,7 +558,9 @@ impl Launcher {
 
         let (name, how) = self.who_plays();
         let face = match self.accounts.player() {
-            Player::Microsoft(_) | Player::ElyBy(_) => self.accounts.selected().map(|a| a.uuid.clone()),
+            Player::Microsoft(_) | Player::ElyBy(_) => {
+                self.accounts.selected().map(|a| a.uuid.clone())
+            }
             _ => None,
         };
         let open = self.account_menu;
