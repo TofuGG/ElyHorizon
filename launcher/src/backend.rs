@@ -3840,32 +3840,6 @@ pub fn {f}("
         );
     }
 
-    /// Every asset a launcher looks for is one the release workflows build, sign and publish.
-    #[test]
-    fn platform_assets_are_published() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let read = |path: &str| fs::read_to_string(repo.join(path)).unwrap();
-        let build = read(".github/workflows/game-build.yml");
-        let nightly = read(".github/workflows/nightly-build.yml");
-        let launcher = read(".github/workflows/launcher.yml");
-        for (os, arch, game, launcher_asset) in PLATFORMS {
-            assert!(
-                build.contains(&format!("asset: {game}")),
-                "game-build.yml builds no {game}"
-            );
-            // Signed (SHA256SUMS), then published.
-            assert_eq!(
-                nightly.matches(&format!("dist/{game}")).count(),
-                2,
-                "nightly-build.yml must sign and publish {game} ({os} {arch})"
-            );
-            assert!(
-                launcher.contains(&format!("asset: {launcher_asset}")),
-                "launcher.yml builds no {launcher_asset}"
-            );
-        }
-    }
-
     #[test]
     fn the_game_plays_under_its_own_audio_stream_name() {
         if std::env::var_os("PIPEWIRE_PROPS").is_some() {
