@@ -2845,7 +2845,7 @@ impl Launcher {
                 .child(
                     shell::text(theme::night::TITLE, shell::c(n.ink))
                         .font_family(theme::DISPLAY_FONT)
-                        .child("Horizon"),
+                        .child("ElyHorizon"),
                 )
         });
         shell::sidebar_plate(&t)
@@ -3411,7 +3411,7 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child(tr("Horizon crashed")),
+                    .child(tr("ElyHorizon crashed")),
             );
         if !crash.summary.is_empty() {
             body = body.child(div().text_color(t.ink_soft).child(crash.summary));
@@ -3657,7 +3657,7 @@ impl Launcher {
                     .child(group("AI", "terminal"))
                     .child(self.no_ai_row(n + 6, cx))
                     .child(group("About", "info-box"))
-                    .child(index_row(n + 7, "Horizon", Some(plain(&horizon)), horizon_action, &t))
+                    .child(index_row(n + 7, "ElyHorizon", Some(plain(&horizon)), horizon_action, &t))
                     .child(index_row(
                         n + 8,
                         tr("Launcher"),
@@ -3981,7 +3981,10 @@ impl Launcher {
                 .as_ref()
                 .filter(|a| a.uuid == uuid)
                 .and_then(|_| match self.sign_in_state.as_ref() {
-                    Some(SignInState::Starting) => Some("Asking Microsoft…"),
+                    Some(SignInState::Starting) => Some(match self.sign_in_provider {
+                        account::Provider::Microsoft => "Asking Microsoft…",
+                        account::Provider::ElyBy => "Asking ely.by…",
+                    }),
                     Some(SignInState::Code(_)) => Some("Waiting for browser sign-in…"),
                     Some(SignInState::Working(phase)) => Some(phase.label()),
                     _ => None,
@@ -4048,11 +4051,18 @@ impl Launcher {
                 a.name.clone(),
                 Some(
                     div()
-                        .child(tr(if plays {
-                            "Microsoft account · plays"
-                        } else {
-                            "Microsoft account"
-                        }))
+                        .child(match a.provider {
+                            account::Provider::Microsoft => tr(if plays {
+                                "Microsoft account · plays"
+                            } else {
+                                "Microsoft account"
+                            }),
+                            account::Provider::ElyBy => tr(if plays {
+                                "ely.by account · plays"
+                            } else {
+                                "ely.by account"
+                            }),
+                        })
                         .child(account_status_line(status, progress, &t))
                         .when(!busy, |row| {
                             row.when_some(status.filter(|s| s.message != s.label()), |row, s| {
@@ -4071,8 +4081,10 @@ impl Launcher {
             Some(SignInState::Starting | SignInState::Code(_) | SignInState::Working(_))
         );
         let detail = match &self.sign_in_state {
-            _ if !configured => div().child(tr(account::NOT_CONFIGURED)),
-            Some(SignInState::Starting) => div().child(tr("Asking Microsoft…")),
+            Some(SignInState::Starting) => div().child(tr(match self.sign_in_provider {
+                account::Provider::Microsoft => "Asking Microsoft…",
+                account::Provider::ElyBy => "Asking ely.by…",
+            })),
             Some(SignInState::Working(phase)) => div().child(tr(phase.label())),
             Some(SignInState::Code(code)) => div()
                 .flex()
@@ -4092,9 +4104,17 @@ impl Launcher {
                 div().child(trf("Signed in as {name}.", &[("name", &a.name)]))
             }
             Some(SignInState::Done(Err(e))) => div().text_color(t.danger).child(e.clone()),
-            None if self.accounts.accounts.is_empty() => div().child(tr(
-                "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
-            )),
+            None if self.accounts.accounts.is_empty() => {
+                if configured {
+                    div().child(tr(
+                        "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
+                    ))
+                } else {
+                    div().child(tr(
+                        "Sign in with ely.by to play on ely.by-compatible and offline-mode servers. For online-mode servers, configure Microsoft sign-in (HORIZON_MSA_CLIENT_ID).",
+                    ))
+                }
+            }
             None => div().child(tr("Add another account.")),
         };
         let detail = if let Some(target) = &self.sign_in_target {
@@ -4119,9 +4139,7 @@ impl Launcher {
                 .child(div().child(said)),
             _ => detail,
         };
-        let action = if !configured {
-            None
-        } else if let Some(SignInState::Code(code)) = &self.sign_in_state {
+        let action = if let Some(SignInState::Code(code)) = &self.sign_in_state {
             let (uri, user_code) = (code.verification_uri.clone(), code.user_code.clone());
             Some(
                 div()
@@ -4163,22 +4181,31 @@ impl Launcher {
         } else {
             let target = self.sign_in_target.as_ref().map(|a| a.uuid.clone());
             let targeted = target.is_some();
-            // Re-signing one account names it; adding one is Microsoft's own button.
-            let sign_in = if targeted {
-                button("sign-in", "Sign in again", Kind::Secondary, &t)
+            let mut actions = div().flex().gap(px(4.));
+            
+            // When adding a new account (not re-signing), show ely.by button
+            if !targeted {
+                actions = actions.child(
+                    button("sign-in-elyby", tr("Sign in with ely.by"), Kind::Secondary, &t).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.begin_elyby_sign_in();
+                            cx.notify();
+                        }),
+                    ),
+                );
             } else {
-                microsoft::sign_in_button("sign-in", &t)
-            };
-            let mut actions = div().flex().gap(px(4.)).child(sign_in.on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    if let Some(uuid) = &target {
-                        this.re_sign_in(uuid);
-                    } else {
-                        this.start_sign_in();
-                    }
-                    cx.notify();
-                },
-            )));
+                // Re-signing an existing account
+                let sign_in = button("sign-in", "Sign in again", Kind::Secondary, &t);
+                actions = actions.child(sign_in.on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        if let Some(uuid) = &target {
+                            this.re_sign_in(uuid);
+                        }
+                        cx.notify();
+                    },
+                )));
+            }
+            
             if targeted {
                 actions = actions.child(
                     button("sign-in-cancel-target", "Cancel", Kind::Ghost, &t).on_click(
@@ -4194,7 +4221,7 @@ impl Launcher {
         n += 1;
         let title = match &self.sign_in_target {
             Some(target) => trf("Sign in again as {name}", &[("name", &target.name)]),
-            None if self.accounts.accounts.is_empty() => tr("Microsoft account").to_owned(),
+            None if self.accounts.accounts.is_empty() => tr("ely.by account").to_owned(),
             None => tr("Another account").to_owned(),
         };
         rows = rows.child(index_row(
@@ -5223,7 +5250,7 @@ fn main() {
                     titlebar: Some(titlebar::options()),
                     #[cfg(target_os = "linux")]
                     window_decorations: Some(gpui::WindowDecorations::Client),
-                    app_id: Some("horizon-launcher".into()),
+                    app_id: Some("elyhorizon-launcher".into()),
                     // GPUI draws a window without focus at most every 33 ms to save energy. A
                     // benchmark's window often starts without it (KDE keeps focus from windows
                     // a background process opens), and it measures drawing, not that limit.

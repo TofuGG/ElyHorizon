@@ -558,7 +558,7 @@ impl Launcher {
 
         let (name, how) = self.who_plays();
         let face = match self.accounts.player() {
-            Player::Microsoft(_) => self.accounts.selected().map(|a| a.uuid.clone()),
+            Player::Microsoft(_) | Player::ElyBy(_) => self.accounts.selected().map(|a| a.uuid.clone()),
             _ => None,
         };
         let open = self.account_menu;
@@ -637,13 +637,16 @@ impl Launcher {
                     .bg(white(fill::BUTTON))
                     .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
                     .cursor_pointer()
-                    .child(microsoft::logo(16.))
                     .child(
                         ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                            .child(tr("Sign in with Microsoft")),
+                            .child(tr("Sign in with ely.by")),
                     )
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
+                        this.begin_elyby_sign_in();
+                        // Open settings page to show the sign-in process
+                        if this.page != Page::Settings {
+                            this.go(Page::Settings);
+                        }
                         cx.notify();
                     })),
                 &t,
@@ -755,7 +758,7 @@ impl Launcher {
                                 .overflow_hidden()
                                 .child(self.profile_heads.draw(
                                     match &who {
-                                        Player::Microsoft(uuid) => Some(uuid),
+                                        Player::Microsoft(uuid) | Player::ElyBy(uuid) => Some(uuid),
                                         _ => None,
                                     },
                                     30.,
