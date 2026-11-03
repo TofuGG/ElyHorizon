@@ -532,9 +532,13 @@ mod tests {
         let link = dir.join("Horizon Launcher.lnk");
         write_link(&link, &exe).unwrap();
         // The bug this guards: a link whose target the shell read as empty, so a double click did nothing.
+        // The shell may return 8.3 short paths (runner~1) or long paths (runneradmin): canonicalize both.
+        let read = PathBuf::from(target_of(&link));
+        let canonical_read = read.canonicalize().unwrap_or(read);
+        let canonical_exe = exe.canonicalize().unwrap_or(exe.clone());
         assert_eq!(
-            target_of(&link).to_lowercase(),
-            exe.to_string_lossy().to_lowercase()
+            canonical_read.to_string_lossy().to_lowercase(),
+            canonical_exe.to_string_lossy().to_lowercase()
         );
         // The uninstaller finds its shortcuts by the program's path inside them.
         assert!(points_to(&link, &exe));
