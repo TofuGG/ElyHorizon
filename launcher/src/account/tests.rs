@@ -204,6 +204,8 @@ fn serve(mock: Arc<Mutex<Mock>>) -> Endpoints {
         xbox_user: format!("{base}/xbl"),
         xsts: format!("{base}/xsts"),
         minecraft: format!("{base}/mc"),
+        ely_oauth: format!("{base}/ely"),
+        ely_services: format!("{base}/ely-services"),
     }
 }
 
@@ -238,6 +240,7 @@ fn the_whole_chain() {
                 "slim".into()
             )),
             cape: Some("http://textures.minecraft.net/texture/cape2".into()),
+            provider: Provider::Microsoft,
         }
     );
     assert_eq!(secrets.minecraft_token, "mc-token");
@@ -316,6 +319,7 @@ fn notch() -> Account {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     }
 }
 
@@ -338,6 +342,8 @@ fn offline() -> Endpoints {
         xbox_user: "http://127.0.0.1:9/xbl".into(),
         xsts: "http://127.0.0.1:9/xsts".into(),
         minecraft: "http://127.0.0.1:9/mc".into(),
+        ely_oauth: "http://127.0.0.1:9/ely".into(),
+        ely_services: "http://127.0.0.1:9/ely-services".into(),
     }
 }
 
@@ -523,6 +529,7 @@ fn any_owner_opens_the_gate_and_the_one_who_plays_brings_the_session() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     });
     accounts.selected = Some("other".into());
     let pass = launch(&ep, Some("test-client"), &store, &mut accounts).unwrap();
@@ -660,6 +667,7 @@ fn accounts_keep_secrets_in_the_store_only() {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     let secrets = Secrets {
         refresh_token: "r".into(),
@@ -896,6 +904,7 @@ fn has_owner_asks_the_selected_account_first() {
                 name: "Other".into(),
                 skin: None,
                 cape: None,
+                provider: Provider::Microsoft,
             },
             &secrets("x-token", false),
         )
@@ -962,6 +971,7 @@ fn session_files_are_private_and_complete() {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     let secrets = Secrets {
         refresh_token: "r".into(),
@@ -1020,6 +1030,7 @@ fn offline_names_switch_with_accounts() {
             name: "Ludo".into(),
             skin: None,
             cape: None,
+            provider: Provider::Microsoft,
         }],
         selected: Some("abc".into()),
         ..Accounts::default()
@@ -2070,6 +2081,7 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     });
     // This launch plays as Alex: Notch's ownership opens the gate, and it is Alex who is told
     // to sign in again, so Alex played. Notch is still the one `account select` picked.

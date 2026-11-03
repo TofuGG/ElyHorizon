@@ -12,6 +12,12 @@
 //!
 //! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
 //! build time, or at run time to override it. Without one, sign-in says it is not configured.
+//!
+//! ely.by is a second provider (`elyby`): the same device-code flow against its OAuth 2.0
+//! endpoints, then its Minecraft services profile, with the OAuth access token as the session
+//! token ([`Provider`]). Accounts say which provider signed them in, so both, and offline names,
+//! can play side by side.
+pub mod elyby;
 pub mod session;
 
 use serde_json::{json, Value};
@@ -55,6 +61,10 @@ pub struct Endpoints {
     pub xsts: String,
     /// api.minecraftservices.com.
     pub minecraft: String,
+    /// ely.by's OAuth 2.0 endpoints (`…/devicecode`, `…/token`).
+    pub ely_oauth: String,
+    /// ely.by's Minecraft services (`…/minecraft/profile`).
+    pub ely_services: String,
 }
 
 impl Endpoints {
@@ -65,11 +75,23 @@ impl Endpoints {
             .ok()
             .filter(|_| cfg!(debug_assertions))
             .unwrap_or_else(|| "https://login.microsoftonline.com/consumers/oauth2/v2.0".into());
+        // The same for ely.by: `HORIZON_ELY_ENDPOINT` replaces both of its bases.
+        let ely = std::env::var("HORIZON_ELY_ENDPOINT")
+            .ok()
+            .filter(|_| cfg!(debug_assertions))
+            .filter(|u| !u.trim().is_empty());
+        let ely_oauth = ely
+            .clone()
+            .unwrap_or_else(|| "https://account.ely.by/api/oauth2/v1".into());
+        let ely_services =
+            ely.unwrap_or_else(|| "https://account.ely.by/api/mojang/services/minecraft".into());
         Self {
             microsoft,
             xbox_user: "https://user.auth.xboxlive.com/user/authenticate".into(),
             xsts: "https://xsts.auth.xboxlive.com/xsts/authorize".into(),
             minecraft: "https://api.minecraftservices.com".into(),
+            ely_oauth,
+            ely_services,
         }
     }
 }
@@ -158,11 +180,11 @@ impl std::fmt::Debug for MsTokens {
     }
 }
 
-pub enum Poll {
+pub enum Poll<T> {
     Pending,
     /// The server asked to poll less often: wait 5 s more.
     SlowDown,
-    Done(MsTokens),
+    Done(T),
 }
 
 pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, String> {
@@ -208,7 +230,7 @@ fn oauth_error(v: &Value) -> String {
 }
 
 /// One poll of the token endpoint while the player signs in.
-pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll, String> {
+pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll<MsTokens>, String> {
     let (status, v) = send(
         request_to("POST", &format!("{}/token", ep.microsoft)),
         Some(Body::Form(vec![
@@ -418,26 +440,53 @@ fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, String> {
         }))
 }
 
+/// Which service signed an account in. Microsoft is the default: accounts saved before ely.by
+/// existed were all Microsoft's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Provider {
+    #[default]
+    #[serde(rename = "microsoft")]
+    Microsoft,
+    /// ely.by: an OAuth 2.0 sign-in whose access token is also the Minecraft session token.
+    #[serde(rename = "elyby")]
+    ElyBy,
+}
+
+impl Provider {
+    /// The provider's name, as the launcher shows and the CLI takes it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Microsoft => "Microsoft",
+            Self::ElyBy => "ely.by",
+        }
+    }
+}
+
 /// A Minecraft profile, as the launcher shows and remembers it (no secrets).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Account {
     /// The profile UUID without dashes.
     pub uuid: String,
     pub name: String,
-    /// The active skin's URL (textures.minecraft.net) and model ("classic" or "slim").
+    /// The active skin's URL (textures.minecraft.net, or an ely.by host) and model ("classic" or
+    /// "slim").
     #[serde(default)]
     pub skin: Option<(String, String)>,
     #[serde(default)]
     pub cape: Option<String>,
+    /// The service that signed this account in.
+    #[serde(default)]
+    pub provider: Provider,
 }
 
 /// The profile; none when the account has none (it doesn't own the game, or never made one).
-fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, String> {
+fn profile(ep: &Endpoints, token: &str, provider: Provider) -> Result<Option<Account>, String> {
+    let url = match provider {
+        Provider::Microsoft => format!("{}/minecraft/profile", ep.minecraft),
+        Provider::ElyBy => format!("{}/profile", ep.ely_services),
+    };
     let (status, v) = send(
-        bearer(
-            request_to("GET", &format!("{}/minecraft/profile", ep.minecraft)),
-            token,
-        ),
+        bearer(request_to("GET", &url), token),
         None,
         "the Minecraft services",
     )?;
@@ -468,6 +517,7 @@ fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, String> {
             ))
         }),
         cape: active("capes").and_then(|c| str_field(&c, "url")),
+        provider,
     }))
 }
 
@@ -512,7 +562,7 @@ pub fn finish_sign_in_with_progress(
         return Err(DOES_NOT_OWN.into());
     }
     progress(session::Phase::Profile);
-    let account = profile(ep, &mc.token)?.ok_or(NO_PROFILE)?;
+    let account = profile(ep, &mc.token, Provider::Microsoft)?.ok_or(NO_PROFILE)?;
     Ok((account, Secrets::new(ms.refresh, mc)))
 }
 
@@ -546,6 +596,25 @@ fn check(ep: &Endpoints, client_id: Option<&str>, account: &Account, secrets: Se
 }
 
 fn check_with(
+    ep: &Endpoints,
+    client_id: Option<&str>,
+    account: &Account,
+    secrets: Secrets,
+    force: bool,
+    progress: &dyn Fn(session::Phase),
+) -> Check {
+    match account.provider {
+        Provider::Microsoft => check_microsoft(ep, client_id, account, secrets, force, progress),
+        // ely.by has no ownership question: every account it signs in may play, and its OAuth
+        // client ID is its own configuration, not Microsoft's.
+        Provider::ElyBy => match elyby::client_id() {
+            Ok(id) => elyby::check_with(ep, &id, account, secrets, force, progress),
+            Err(e) => Check::NoAnswer(e, secrets),
+        },
+    }
+}
+
+fn check_microsoft(
     ep: &Endpoints,
     client_id: Option<&str>,
     account: &Account,
@@ -587,7 +656,7 @@ fn check_with(
             return Ok(None);
         }
         progress(session::Phase::Profile);
-        profile(ep, token)
+        profile(ep, token, Provider::Microsoft)
     }) {
         Err(e) => Check::NoAnswer(e, secrets),
         Ok(None) => Check::DoesNot(Secrets {
@@ -1510,10 +1579,22 @@ pub struct Accounts {
 pub enum Player {
     /// A Microsoft account, by UUID.
     Microsoft(String),
+    /// An ely.by account, by UUID.
+    ElyBy(String),
     /// An offline name.
     Offline(String),
     /// Offline as the name the game made up.
     GameName,
+}
+
+impl Player {
+    /// The signed-in account's UUID, whichever service signed it in.
+    pub fn account(&self) -> Option<&str> {
+        match self {
+            Self::Microsoft(uuid) | Self::ElyBy(uuid) => Some(uuid),
+            Self::Offline(_) | Self::GameName => None,
+        }
+    }
 }
 
 const OFFLINE_NEEDS_OWNER: &str =
@@ -1610,7 +1691,10 @@ impl Accounts {
     /// Who plays now.
     pub fn player(&self) -> Player {
         match (self.selected(), &self.offline_selected) {
-            (Some(a), _) => Player::Microsoft(a.uuid.clone()),
+            (Some(a), _) => match a.provider {
+                Provider::Microsoft => Player::Microsoft(a.uuid.clone()),
+                Provider::ElyBy => Player::ElyBy(a.uuid.clone()),
+            },
             (None, Some(name)) => Player::Offline(name.clone()),
             (None, None) => Player::GameName,
         }
@@ -1632,7 +1716,7 @@ impl Accounts {
         offline_without_owner: bool,
     ) -> Result<(), String> {
         match who {
-            Player::Microsoft(uuid) => {
+            Player::Microsoft(uuid) | Player::ElyBy(uuid) => {
                 if !self.accounts.iter().any(|a| a.uuid == uuid) {
                     return Err("That account isn't signed in.".into());
                 }
@@ -1891,13 +1975,18 @@ pub fn write_session_file(
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(&path).map_err(|e| e.to_string())?;
-    let body = json!({
+    let mut body = json!({
         "name": account.name,
         "uuid": account.uuid,
         "access_token": secrets.minecraft_token,
         "user_type": "msa",
         "xuid": secrets.xuid,
     });
+    // An ely.by session keeps `user_type` "msa" (the game takes no other) and says which API its
+    // calls go to; Microsoft sessions are unchanged.
+    if account.provider == Provider::ElyBy {
+        body["api"] = json!("elyby");
+    }
     std::io::Write::write_all(&mut file, body.to_string().as_bytes()).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -1953,32 +2042,49 @@ pub struct SignIn {
 }
 
 impl SignIn {
+    /// A Microsoft sign-in, for a new account.
     pub fn start() -> Self {
-        Self::start_expected(None)
+        Self::start_with(Provider::Microsoft, None)
+    }
+
+    /// An ely.by sign-in, for a new account.
+    pub fn start_elyby() -> Self {
+        Self::start_with(Provider::ElyBy, None)
     }
 
     /// Restore this exact Minecraft identity without changing who currently plays.
     pub fn start_for(account: Account) -> Self {
-        Self::start_expected(Some(account))
+        let provider = account.provider;
+        Self::start_with(provider, Some(account))
     }
 
-    fn start_expected(expected: Option<Account>) -> Self {
+    fn start_with(provider: Provider, expected: Option<Account>) -> Self {
         use std::sync::atomic::Ordering;
         let state = std::sync::Arc::new(Mutex::new(SignInState::Starting));
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (thread_state, thread_cancel) = (state.clone(), cancel.clone());
         std::thread::spawn(move || {
             let set = |s| *thread_state.lock().unwrap() = s;
+            let cancelled = || thread_cancel.load(Ordering::Relaxed);
             let result = (|| {
                 let ep = Endpoints::live();
-                let client_id = client_id().ok_or(NOT_CONFIGURED)?;
-                let code = device_code(&ep, &client_id)?;
-                set(SignInState::Code(code.clone()));
-                let ms = wait_for_sign_in(&ep, &client_id, &code, &|| {
-                    thread_cancel.load(Ordering::Relaxed)
-                })?;
                 let progress = |phase| set(SignInState::Working(phase));
-                let (account, secrets) = finish_sign_in_with_progress(&ep, ms, &progress)?;
+                let (account, secrets) = match provider {
+                    Provider::Microsoft => {
+                        let client_id = client_id().ok_or(NOT_CONFIGURED)?;
+                        let code = device_code(&ep, &client_id)?;
+                        set(SignInState::Code(code.clone()));
+                        let ms = wait_for_sign_in(&ep, &client_id, &code, &cancelled)?;
+                        finish_sign_in_with_progress(&ep, ms, &progress)?
+                    }
+                    Provider::ElyBy => {
+                        let client_id = elyby::client_id()?;
+                        let code = elyby::device_code(&ep, &client_id)?;
+                        set(SignInState::Code(code.clone()));
+                        let tokens = elyby::wait_for_sign_in(&ep, &client_id, &code, &cancelled)?;
+                        elyby::finish_sign_in(&ep, tokens, &progress)?
+                    }
+                };
                 progress(session::Phase::Queued);
                 let store = store();
                 let _operation = session::lock(store)?;
@@ -1989,7 +2095,7 @@ impl SignIn {
                     expected.as_ref(),
                     account.clone(),
                     &secrets,
-                    &|| thread_cancel.load(Ordering::Relaxed),
+                    &cancelled,
                     &progress,
                 )?;
                 progress(session::Phase::Saving);

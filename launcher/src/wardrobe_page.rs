@@ -516,6 +516,7 @@ impl Launcher {
             name: "Preview".into(),
             skin: None,
             cape: None,
+            provider: account::Provider::Microsoft,
         };
         let mut saved = Saved {
             me: Some(Me {

@@ -597,6 +597,22 @@ fn connection_lost(e: horizon_protocol::Error, lang: &Language) -> String {
     }
 }
 
+/// Whether a login refusal is the one a server that verifies sessions with Microsoft sends to an
+/// account it can't find there: vanilla's `multiplayer.disconnect.unverified_username`, or the
+/// "Invalid session" a proxy answers.
+fn is_microsoft_auth_refusal(reason_json: &str) -> bool {
+    let lower = reason_json.to_lowercase();
+    [
+        "unverified_username",
+        "invalid_session",
+        "failed to verify username",
+        "invalid session",
+        "unable to verify player details",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 /// `ClientHandshakePacketListenerImpl.handleHello`: the whole connection.
 /// Ok: why it ended for good (the server's reason, or
 /// a refusal no retry fixes); Err: the connection failed.
@@ -684,6 +700,14 @@ fn run(
                 break p.profile;
             }
             login::Clientbound::Disconnect(p) => {
+                // An ely.by account on a server that verifies sessions with Microsoft is refused
+                // there: the server's "Failed to verify username!" hides the cause, so name it.
+                if auth.is_some_and(|a| a.is_elyby()) && is_microsoft_auth_refusal(&p.reason_json) {
+                    return Ok(Reason::keyed(
+                        "horizon.multiplayer.elyby_needs_microsoft_server",
+                        lang,
+                    ));
+                }
                 return Ok(Reason::component(&p.reason_json, lang));
             }
             login::Clientbound::Hello(hello) => {

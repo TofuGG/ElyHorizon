@@ -349,3 +349,28 @@ Microsoft, Xbox and Minecraft endpoints, and the keychain abstraction with an in
 - (d) Game: chat signing (profile keys, chat session, signed messages and commands).
 
 Each part ships on its own: online mode needs a session, which only (c) creates.
+
+## ely.by accounts
+
+The launcher's second provider is [ely.by](https://ely.by), signed in with its OAuth 2.0 device
+flow (`account.ely.by/api/oauth2/v1/devicecode`, then `/token`). The OAuth access token is also the
+Minecraft session token, so the same session file carries it, tagged `"api": "elyby"`; the game
+then joins and verifies against `authserver.ely.by` instead of the Microsoft discovery document,
+and asks ely.by's Minecraft services for the account's own skin and cape.
+
+The default OAuth application is `elyhorizon`; `ELYBY_CLIENT_ID` (or the launcher's
+`elyby-client-id` setting) replaces it.
+
+Known limitations:
+
+- **Servers:** an ely.by account can join offline-mode and ely.by-compatible servers only. A server
+  that verifies sessions with Microsoft refuses it, and the client says so ("This server uses
+  Microsoft authentication; ely.by accounts can't join it.") instead of showing the server's
+  "Failed to verify username!".
+- **LAN guests:** mixed providers are unsupported. A LAN host signed in with ely.by refuses guests
+  with an explicit reason (`lan/conn.rs`), and an ely.by guest can't be verified by a Microsoft
+  host.
+- **Chat:** unsigned. ely.by has no profile key pair endpoint
+  (`authserver.ely.by/api/minecraft/profile/keys` answers 404), so the client skips the key fetch
+  and falls back to unsigned chat.
+

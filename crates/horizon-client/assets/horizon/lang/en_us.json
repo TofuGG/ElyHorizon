@@ -504,5 +504,7 @@
   "horizon.extras.cosmetics_auras.tooltip": "Auras and trails other players wear. Off by default.",
   "horizon.extras.cosmetics.shown": "Shown",
   "horizon.extras.cosmetics.hidden": "Hidden",
-  "horizon.extras.cosmetics.name_tags": "Name tags only"
+  "horizon.extras.cosmetics.name_tags": "Name tags only",
+  "horizon.multiplayer.elyby_needs_microsoft_server": "This server uses Microsoft authentication; ely.by accounts can't join it.",
+  "horizon.multiplayer.disconnect.elyby_guest_unsupported": "The host of this LAN world signs in with ely.by; guests can't be verified against it yet."
 }

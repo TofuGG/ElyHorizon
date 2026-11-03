@@ -3382,6 +3382,10 @@ pub struct Settings {
     /// comes from the player's own install. Off by default, and absent from the file while off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev_offline: bool,
+    /// The ely.by application (client ID) sign-in uses, over the launcher's own registration
+    /// (`account::elyby`). Unset uses `ELYBY_CLIENT_ID`, then the launcher's own ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elyby_client_id: Option<String>,
 }
 
 impl Settings {
@@ -3637,6 +3641,7 @@ mod tests {
             name: "Notch".into(),
             skin: None,
             cape: None,
+            provider: account::Provider::Microsoft,
         };
         let secrets = serde_json::from_str(
             r#"{"refresh_token":"r","minecraft_token":"t","minecraft_expires_at":1,"owns":true}"#,

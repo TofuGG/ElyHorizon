@@ -56,6 +56,36 @@ pub fn dir() -> PathBuf {
     crate::backend::data_dir().join("skins")
 }
 
+/// The hosts a profile's skin or cape URL may come from: Mojang's texture host, and ely.by's own
+/// (its `skinDomains`, `["ely.by", ".ely.by"]`), where an ely.by account's textures live.
+pub const TEXTURE_HOSTS: [&str; 2] = ["textures.minecraft.net", "ely.by"];
+
+/// Whether `url` may be a skin or cape: an http(s) URL on an allowed host (or its subdomains).
+/// The launcher fetches these without credentials, so any of them is safe to ask.
+pub fn texture_url_allowed(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        // No userinfo tricks: the host is what follows the last `@`.
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    TEXTURE_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
 fn decode(bytes: &[u8]) -> Result<image::RgbaImage, String> {
     image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map(|i| i.to_rgba8())

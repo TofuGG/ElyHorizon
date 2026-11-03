@@ -13,6 +13,36 @@ use std::{
 pub const DEFAULT_DISCOVERY: &str = "https://discovery.minecraftservices.com/minecraft/client";
 /// A session file older than this is refused: it can't be replayed later.
 const MAX_SESSION_FILE_AGE: Duration = Duration::from_secs(120);
+/// ely.by's session server, at the host's root (not under `/api`): join, hasJoined and profile.
+pub const ELY_SESSION_SERVER: &str = "https://authserver.ely.by";
+/// ely.by's Minecraft services, where an account's own skin and cape live.
+pub const ELY_SERVICES: &str = "https://account.ely.by/api/mojang/services/minecraft";
+
+/// Which service a session talks to. The launcher writes `"api": "elyby"` in the session file
+/// for an ely.by account; every other session is Microsoft's, as it always was.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Api {
+    #[default]
+    Minecraft,
+    ElyBy,
+}
+
+impl Api {
+    /// ely.by's session server, or `HORIZON_ELY_AUTHSERVER` for a test or a mirror.
+    fn ely_session_server() -> String {
+        ely_session_server()
+    }
+}
+
+/// ely.by's session server, or `HORIZON_ELY_AUTHSERVER` for a test or a mirror. It serves
+/// `session/join`, `session/hasJoined` and `session/profile` at its root, and the profile lookup
+/// under `/api/users/profiles/minecraft`.
+pub fn ely_session_server() -> String {
+    std::env::var("HORIZON_ELY_AUTHSERVER")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| ELY_SESSION_SERVER.to_owned())
+}
 
 /// A signed-in account (vanilla's User with type msa).
 pub struct AuthSession {
@@ -20,6 +50,7 @@ pub struct AuthSession {
     pub uuid: u128,
     pub xuid: Option<String>,
     access_token: String,
+    api: Api,
 }
 impl std::fmt::Debug for AuthSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -27,6 +58,7 @@ impl std::fmt::Debug for AuthSession {
             .field("name", &self.name)
             .field("uuid", &horizon_protocol::crypto::uuid_string(self.uuid))
             .field("access_token", &"<hidden>")
+            .field("api", &self.api)
             .finish()
     }
 }
@@ -47,9 +79,20 @@ impl AuthSession {
             uuid,
             xuid: None,
             access_token: access_token.to_owned(),
+            api: Api::Minecraft,
         }
     }
-    /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa", "xuid"}.
+    /// Which service this session's calls go to.
+    pub fn api(&self) -> Api {
+        self.api
+    }
+    /// Whether this is an ely.by account: it can't join a server that checks sessions with
+    /// Microsoft.
+    pub fn is_elyby(&self) -> bool {
+        self.api == Api::ElyBy
+    }
+    /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa", "xuid"},
+    /// and `"api": "elyby"` for an ely.by account.
     pub fn parse(text: &str) -> Result<Self, String> {
         let v: serde_json::Value =
             serde_json::from_str(text).map_err(|_| "the session is not valid JSON")?;
@@ -67,11 +110,17 @@ impl AuthSession {
         if field("user_type").is_some_and(|t| t != "msa") {
             return Err("the session is not a Microsoft account session".into());
         }
+        let api = match field("api") {
+            None | Some("microsoft" | "msa") => Api::Minecraft,
+            Some("elyby") => Api::ElyBy,
+            Some(other) => return Err(format!("unknown session api: {other}")),
+        };
         Ok(Self {
             name: name.to_owned(),
             uuid,
             xuid: field("xuid").map(str::to_owned),
             access_token: access_token.to_owned(),
+            api,
         })
     }
     /// Read the session file the launcher wrote and delete it at once. It
@@ -211,6 +260,11 @@ pub fn endpoint(doc: &serde_json::Value, service: &str, name: &str) -> Option<St
 /// to no actions, as vanilla does. Blocks: call it off the main thread.
 pub fn fetch_account_status(session: &AuthSession) -> crate::ban_notice::AccountStatus {
     use crate::ban_notice::{AccountStatus, parse_profile_actions, parse_properties};
+    // ely.by has neither service: its accounts have no attributes to read and no profile
+    // actions to gate, so the offline defaults stand.
+    if session.api() != Api::Minecraft {
+        return AccountStatus::default();
+    }
     let Ok(doc) = discovery() else {
         return AccountStatus::default();
     };
@@ -281,8 +335,15 @@ pub fn join_server(session: &AuthSession, server_hash: &str) -> Result<(), JoinE
 }
 
 fn join_server_once(session: &AuthSession, server_hash: &str) -> Result<(), JoinError> {
-    let doc = discovery()?;
-    let url = endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?;
+    let url = match session.api() {
+        Api::Minecraft => {
+            let doc = discovery()?;
+            endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?
+        }
+        // ely.by answers at its host's root, like any Yggdrasil session server, with the same
+        // JoinMinecraftServerRequest body.
+        Api::ElyBy => format!("{}/session/join", Api::ely_session_server()),
+    };
     match agent()
         .post(&url)
         .set("Content-Type", "application/json; charset=utf-8")
@@ -401,8 +462,15 @@ pub fn parse_certificates(body: &str) -> Option<ChatKeyPair> {
 }
 
 /// UserApiService.getKeyPair: the certificates endpoint, POSTed with the
-/// access token.
+/// access token. ely.by has no signed chat: its chat keys endpoint answers 404
+/// (`authserver.ely.by/api/minecraft/profile/keys`), so ely.by sessions chat
+/// unsigned rather than fetching keys that can't be signed by a Mojang key.
 pub fn fetch_chat_keys(session: &AuthSession) -> Result<ChatKeyPair, JoinError> {
+    if session.is_elyby() {
+        return Err(JoinError::Other(
+            "ely.by accounts have no signed chat keys".to_owned(),
+        ));
+    }
     let doc = discovery()?;
     let url = endpoint(&doc, "player", "getCertificates").ok_or(JoinError::Unavailable)?;
     let body = match agent()
@@ -449,6 +517,11 @@ pub fn prepare_chat_keys(now: bool) {
     let Some(session) = current() else {
         return;
     };
+    // ely.by has no profile key pair to fetch: chat stays unsigned, and asking every hour would
+    // only fill the log.
+    if session.is_elyby() {
+        return;
+    }
     let mut keys = CHAT_KEYS.lock().unwrap();
     let instant = std::time::Instant::now();
     if keys.fetching || !now && keys.next_try.is_some_and(|t| instant < t) {
@@ -496,9 +569,14 @@ const MINECRAFT_PROFILE: &str = "https://api.minecraftservices.com/minecraft/pro
 /// The signed-in account's active skin and cape from `GET /minecraft/profile`.
 /// Single-player and integrated servers often send no `textures` property, or
 /// one without the equipped cape; the client asks the profile endpoint once.
+/// ely.by answers the same shape from its own Minecraft services profile.
 pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
+    let url = match session.api() {
+        Api::Minecraft => MINECRAFT_PROFILE.to_owned(),
+        Api::ElyBy => format!("{ELY_SERVICES}/profile"),
+    };
     let response = agent()
-        .get(MINECRAFT_PROFILE)
+        .get(&url)
         .set("Authorization", &format!("Bearer {}", session.access_token))
         .call()
         .ok()?;

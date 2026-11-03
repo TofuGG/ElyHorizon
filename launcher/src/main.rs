@@ -310,6 +310,8 @@ struct Launcher {
     auth_next: u64,
     sign_in: Option<SignIn>,
     sign_in_state: Option<SignInState>,
+    /// Which service the sign-in sheet is signing in to: Microsoft, or ely.by.
+    sign_in_provider: account::Provider,
     /// What to say when the keychain doesn't keep sign-ins ([`account::no_keychain`]).
     keychain: Option<String>,
     /// Whether an account here owns the game, by the keychain's last answers (the owner gate);
@@ -597,6 +599,7 @@ impl Launcher {
             auth_next: 0,
             sign_in: None,
             sign_in_state: None,
+            sign_in_provider: account::Provider::Microsoft,
             keychain: None,
             owner: None,
             owner_screen_open: false,
@@ -1755,11 +1758,22 @@ impl Launcher {
 
     fn begin_sign_in(&mut self, target: Option<account::Account>) {
         self.cancel_sign_in();
+        self.sign_in_provider = target
+            .as_ref()
+            .map_or(account::Provider::Microsoft, |a| a.provider);
         self.sign_in = Some(match &target {
             Some(account) => SignIn::start_for(account.clone()),
             None => SignIn::start(),
         });
         self.sign_in_target = target;
+        self.sign_in_state = Some(SignInState::Starting);
+    }
+
+    /// A new account from ely.by: its own device-code flow, in the same sheet.
+    fn begin_elyby_sign_in(&mut self) {
+        self.cancel_sign_in();
+        self.sign_in_provider = account::Provider::ElyBy;
+        self.sign_in = Some(SignIn::start_elyby());
         self.sign_in_state = Some(SignInState::Starting);
     }
 
@@ -5343,6 +5357,7 @@ mod tests {
             name: "TestAccount".into(),
             skin: None,
             cape: None,
+            provider: horizon_launcher::account::Provider::Microsoft,
         }));
         assert!(sign_in_change(&mut shown, SignInState::Starting).is_some());
         assert!(sign_in_change(&mut shown, SignInState::Starting).is_none());
