@@ -115,6 +115,10 @@ enum AccountCmd {
         /// who plays stays the same
         #[arg(long = "for")]
         target: Option<String>,
+        /// Sign in with an ely.by account instead of a Microsoft one. Such an account plays
+        /// offline-mode and ely.by-compatible servers only
+        #[arg(long)]
+        ely: bool,
     },
     /// Renew an account's session now, even when its access token is still fresh
     Refresh { who: String },
@@ -1083,6 +1087,12 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
                 s.proxy = Some(value.trim().to_string());
             }
         }
+        "elyby-client-id" => {
+            s.elyby_client_id = match value.trim() {
+                "" | "default" => None,
+                id => Some(id.to_owned()),
+            }
+        }
         _ => return Err(format!("No setting {key}.")),
     }
     Ok(())
@@ -1107,6 +1117,7 @@ fn settings_json(s: &backend::Settings) -> serde_json::Value {
         "background": horizon_launcher::themes::background(&backend::data_dir(), s.background.as_deref()),
         "native_profile": native_mods::Profile::chosen(s).name(),
         "no_ai": backend::no_ai(),
+        "elyby_client_id": account::elyby::client_id().ok(),
     })
 }
 
@@ -1856,6 +1867,7 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                 json(serde_json::json!({
                     "accounts": accounts.accounts.iter().map(|a| serde_json::json!({
                         "name": a.name, "uuid": a.uuid,
+                        "provider": a.provider.label(),
                         "selected": accounts.selected.as_ref() == Some(&a.uuid),
                         "authentication": account::session::status(account::store(), &a.uuid),
                     })).collect::<Vec<_>>(),
@@ -1886,7 +1898,13 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                         " "
                     };
                     let status = account::session::status(account::store(), &a.uuid);
-                    println!("{mark} {}  {}  {}", a.name, a.uuid, status.label());
+                    println!(
+                        "{mark} {}  {}  {}  {}",
+                        a.name,
+                        a.uuid,
+                        a.provider.label(),
+                        status.label()
+                    );
                 }
                 for n in &accounts.offline {
                     let on = accounts.player() == account::Player::Offline(n.clone());
@@ -1922,7 +1940,9 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                 (Err(status), false) => return Err(status.message),
             }
         }
-        AccountCmd::SignIn { target: Some(who) } => {
+        AccountCmd::SignIn {
+            target: Some(who), ..
+        } => {
             let a = find(&accounts, &who)?;
             let sign_in = account::SignIn::start_for(a.clone());
             let mut shown = false;
@@ -1953,7 +1973,41 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
                 println!("Signed in as {} again.", signed_in.name);
             }
         }
-        AccountCmd::SignIn { target: None } => {
+        AccountCmd::SignIn {
+            target: None,
+            ely: true,
+        } => {
+            let client_id = account::elyby::client_id()?;
+            let ep = account::Endpoints::live();
+            let code = account::elyby::device_code(&ep, &client_id)?;
+            if as_json {
+                json(serde_json::json!({
+                    "link": code.verification_uri,
+                    "code": code.user_code,
+                }));
+            } else {
+                eprintln!(
+                    "To sign in to ely.by, open {} in a browser and enter the code {}",
+                    code.verification_uri, code.user_code
+                );
+            }
+            let tokens = account::elyby::wait_for_sign_in(&ep, &client_id, &code, &|| false)?;
+            let (signed_in, secrets) = account::elyby::finish_sign_in(&ep, tokens, &|_| {})?;
+            accounts.add(account::store(), signed_in.clone(), &secrets)?;
+            accounts.save()?;
+            if as_json {
+                json(serde_json::json!({ "signed_in": signed_in.uuid }));
+            } else {
+                println!("Signed in as {}.", signed_in.name);
+            }
+            if let Some(said) = account::no_keychain() {
+                eprintln!("{said}");
+            }
+        }
+        AccountCmd::SignIn {
+            target: None,
+            ely: false,
+        } => {
             let client_id = account::client_id().ok_or(account::NOT_CONFIGURED)?;
             let ep = account::Endpoints::live();
             let code = account::device_code(&ep, &client_id)?;

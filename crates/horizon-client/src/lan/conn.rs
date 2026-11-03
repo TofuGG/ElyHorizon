@@ -661,6 +661,26 @@ fn authenticate(
         }
     };
     let ip = online.prevent_proxy.then(|| address.ip());
+    // Mixed providers are out of scope for LAN guests: this verifies against Microsoft's session
+    // service, and an ely.by guest isn't in it (and an ely.by host can't verify a Microsoft one).
+    // Say so plainly instead of failing with "invalid session".
+    if crate::auth::current().is_some_and(|s| s.is_elyby()) {
+        let text = refuse(
+            c,
+            shared,
+            &thread,
+            user,
+            &translatable(
+                "horizon.multiplayer.disconnect.elyby_guest_unsupported",
+                &[],
+            ),
+        );
+        log(
+            "ERROR",
+            &format!("Refused {name}: LAN guests of an ely.by account are unsupported"),
+        );
+        return Ok(Err(text));
+    }
     match crate::auth::has_joined(name, &digest, ip) {
         Ok(Some(profile)) => {
             log(

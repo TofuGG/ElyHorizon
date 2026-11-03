@@ -18,6 +18,8 @@ pub enum Phase {
     Profile,
     Saving,
     SigningOut,
+    /// Renewing or finishing an ely.by sign-in.
+    ElyBy,
 }
 
 impl Phase {
@@ -32,6 +34,7 @@ impl Phase {
             Self::Profile => "Loading Minecraft profile…",
             Self::Saving => "Saving sign-in…",
             Self::SigningOut => "Signing out…",
+            Self::ElyBy => "Signing in to ely.by…",
         }
     }
 }
@@ -368,6 +371,14 @@ pub fn join_server(who: &str, server_id: &str) -> Result<(), String> {
         .find(who)
         .cloned()
         .ok_or("Sign in with a Minecraft account first.")?;
+    // The Wardrobe proves the account to Horizon's own service through Mojang's session server.
+    // An ely.by account isn't in it, so name that instead of a Mojang refusal.
+    if account.provider == Provider::ElyBy {
+        return Err(crate::i18n::tr(
+            "The Wardrobe needs a Microsoft account: Horizon's cosmetic service can't verify ely.by accounts yet.",
+        )
+        .to_owned());
+    }
     join_server_with(
         &Endpoints::live(),
         SESSION_SERVER,

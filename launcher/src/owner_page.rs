@@ -29,6 +29,12 @@ impl Launcher {
         self.start_sign_in();
     }
 
+    /// The same for an ely.by account: the sheet shows its own code.
+    pub(crate) fn sign_in_to_play_elyby(&mut self) {
+        self.owner_screen_open = true;
+        self.begin_elyby_sign_in();
+    }
+
     /// Closes it; it comes back with the next refused Play.
     fn close_owner_screen(&mut self) {
         self.cancel_sign_in();
@@ -42,12 +48,22 @@ impl Launcher {
     pub(crate) fn owner_screen(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let t = self.theme;
         let n = t.night;
-        let configured = account::client_id().is_some();
+        let elyby = self.sign_in_provider == account::Provider::ElyBy;
+        let configured = if elyby {
+            account::elyby::client_id().is_ok()
+        } else {
+            account::client_id().is_some()
+        };
         // The screenshot preview shows a code without asking Microsoft for one.
         let state = match &self.sign_in_state {
             _ if sign_in_preview() => Shown::Code("https://www.microsoft.com/link", "K7Q-4MXR"),
+            _ if !configured && elyby => Shown::Error(tr(account::elyby::NO_CLIENT_ID)),
             _ if !configured => Shown::Error(tr(account::NOT_CONFIGURED)),
-            Some(SignInState::Starting) => Shown::Starting("Asking Microsoft…"),
+            Some(SignInState::Starting) => Shown::Starting(if elyby {
+                "Asking ely.by…"
+            } else {
+                "Asking Microsoft…"
+            }),
             Some(SignInState::Working(phase)) => Shown::Starting(phase.label()),
             Some(SignInState::Code(code)) => Shown::Code(&code.verification_uri, &code.user_code),
             Some(SignInState::Done(Err(e))) => Shown::Error(e),
@@ -66,14 +82,35 @@ impl Launcher {
             .child(
                 shell::text(theme::night::CAPTION, shell::c(n.muted))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("Microsoft account").to_string()),
+                    .child(
+                        tr(if elyby {
+                            "ely.by account"
+                        } else {
+                            "Microsoft account"
+                        })
+                        .to_string(),
+                    ),
             )
             .child(
                 shell::text(theme::night::TITLE, shell::c(n.ink))
                     .mb(px(4.))
                     .child(tr("Sign in to play").to_string()),
-            )
+            );
+        body = if elyby {
+            body.child(line(
+                "Horizon can sign in with an ely.by account, which needs no copy of Minecraft.",
+                n.ink_soft,
+            ))
             .child(line(
+                "Such an account plays offline-mode and ely.by-compatible servers only: it can't join a server that checks sessions with Microsoft.",
+                n.ink_soft,
+            ))
+            .child(line(
+                "Your worlds, offline names and settings stay where they are.",
+                n.muted,
+            ))
+        } else {
+            body.child(line(
                 "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
                 n.ink_soft,
             ))
@@ -84,7 +121,8 @@ impl Launcher {
             .child(line(
                 "Your worlds, offline names and settings stay where they are.",
                 n.muted,
-            ));
+            ))
+        };
         let raised = || {
             div()
                 .relative()
@@ -162,6 +200,14 @@ impl Launcher {
             }
             Shown::Starting(_) => None,
             Shown::Error(_) if !configured => None,
+            _ if elyby => Some(
+                shell::action("owner-sign-in-elyby", shell::Action::Main, &t)
+                    .child(shell::label(tr("Sign in with ely.by").to_string()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.sign_in_to_play_elyby();
+                        cx.notify();
+                    })),
+            ),
             _ => Some(
                 microsoft::sign_in_button("owner-sign-in", &t).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
@@ -171,10 +217,35 @@ impl Launcher {
                 )),
             ),
         };
+        // The other way in, under the main answer: ely.by, or Microsoft instead.
+        let other = (!matches!(state, Shown::Code(..) | Shown::Starting(_))).then(|| {
+            if elyby {
+                shell::action("owner-sign-in-microsoft", shell::Action::Quiet, &t)
+                    .child(shell::label(tr("Use a Microsoft account").to_string()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.sign_in_to_play();
+                        cx.notify();
+                    }))
+            } else {
+                shell::action("owner-sign-in-elyby", shell::Action::Quiet, &t)
+                    .child(shell::label(tr("Sign in with ely.by").to_string()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.sign_in_to_play_elyby();
+                        cx.notify();
+                    }))
+            }
+        });
         let waiting = matches!(state, Shown::Code(..)).then(|| {
             shell::text(theme::night::CAPTION, shell::c(n.muted))
                 .relative()
-                .child(tr("Waiting for Microsoft… the window goes on by itself.").to_string())
+                .child(
+                    tr(if elyby {
+                        "Waiting for ely.by… the window goes on by itself."
+                    } else {
+                        "Waiting for Microsoft… the window goes on by itself."
+                    })
+                    .to_string(),
+                )
         });
         let answers = div()
             .relative()
@@ -183,6 +254,7 @@ impl Launcher {
             .gap(px(10.))
             .mt(px(14.))
             .children(main)
+            .children(other)
             .child(
                 shell::action("owner-later", shell::Action::Quiet, &t)
                     .child(shell::label(tr("Not now").to_string()))

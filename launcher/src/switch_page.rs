@@ -8,11 +8,14 @@ impl Launcher {
     /// The chip's two lines: the name that plays, and how.
     pub(super) fn who_plays(&self) -> (String, &'static str) {
         match self.accounts.player() {
-            Player::Microsoft(_) => (
+            Player::Microsoft(_) | Player::ElyBy(_) => (
                 self.accounts
                     .selected()
                     .map_or_else(String::new, |a| a.name.clone()),
-                tr("Microsoft account"),
+                match self.accounts.selected().map(|a| a.provider) {
+                    Some(account::Provider::ElyBy) => tr("ely.by account"),
+                    _ => tr("Microsoft account"),
+                },
             ),
             Player::Offline(name) => (name, tr("Offline")),
             Player::GameName => (
@@ -40,12 +43,15 @@ impl Launcher {
             .accounts
             .accounts
             .iter()
-            .map(|a| {
-                (
+            .map(|a| match a.provider {
+                account::Provider::ElyBy => {
+                    (Player::ElyBy(a.uuid.clone()), a.name.clone(), tr("ely.by"))
+                }
+                account::Provider::Microsoft => (
                     Player::Microsoft(a.uuid.clone()),
                     a.name.clone(),
                     tr("Microsoft"),
-                )
+                ),
             })
             .collect();
         out.extend(
@@ -103,7 +109,7 @@ impl Launcher {
                     .hover(move |s| s.bg(t.plate_soft))
                     .child(self.profile_heads.draw(
                         match &who {
-                            Player::Microsoft(uuid) => Some(uuid),
+                            Player::Microsoft(uuid) | Player::ElyBy(uuid) => Some(uuid),
                             _ => None,
                         },
                         24.,
@@ -127,6 +133,18 @@ impl Launcher {
                         cx.notify();
                     })),
             );
+        }
+        if self
+            .accounts
+            .accounts
+            .iter()
+            .any(|a| a.provider == account::Provider::ElyBy)
+        {
+            menu = menu.child(div().px(px(10.)).pb(px(6.)).child(
+                text(theme::CAPTION).text_color(t.muted).child(tr(
+                    "ely.by accounts can join offline-mode and ely.by servers only.",
+                )),
+            ));
         }
         menu = menu.child(div().my(px(6.)).h(px(1.)).bg(t.rule)).child(
             div()

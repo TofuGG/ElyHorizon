@@ -30,6 +30,36 @@ pub const TEXTURE_URIS: [&str; 2] = [
     "http://textures.minecraft.net/texture/{textureId}",
 ];
 
+/// The hosts a skin or cape URL may come from: Mojang's texture host, and ely.by's own (its
+/// `skinDomains`, `["ely.by", ".ely.by"]`), where an ely.by account's textures live. ely.by
+/// proxies Mojang skins for premium accounts, so both are needed.
+pub const TEXTURE_HOSTS: [&str; 2] = ["textures.minecraft.net", "ely.by"];
+
+/// Whether `url` may be a skin or cape: an http(s) URL on an allowed host (or its subdomains).
+pub fn texture_url_allowed(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        // No userinfo tricks: the host is what follows the last `@`.
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    TEXTURE_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
 /// `java.util.Base64.getDecoder().decode`.
 pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
     use base64::{
@@ -68,7 +98,8 @@ pub fn unpack(value: &str, signature: Signature, valid_uris: &[&str]) -> Texture
         };
         let allowed = valid_uris
             .iter()
-            .any(|u| url.starts_with(&u.replace("{textureId}", "")));
+            .any(|u| url.starts_with(&u.replace("{textureId}", "")))
+            || texture_url_allowed(url);
         if !allowed {
             return empty;
         }
@@ -113,11 +144,7 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
     let skin = skin_entry
         .and_then(|t| t.get("url"))
         .and_then(|u| u.as_str())
-        .filter(|url| {
-            TEXTURE_URIS
-                .iter()
-                .any(|u| url.starts_with(&u.replace("{textureId}", "")))
-        })
+        .filter(|url| texture_url_allowed(url))
         .map(str::to_owned);
     let slim = skin_entry
         .and_then(|t| t.get("variant"))
@@ -126,11 +153,7 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
     let cape = active("capes")
         .and_then(|t| t.get("url"))
         .and_then(|u| u.as_str())
-        .filter(|url| {
-            TEXTURE_URIS
-                .iter()
-                .any(|u| url.starts_with(&u.replace("{textureId}", "")))
-        })
+        .filter(|url| texture_url_allowed(url))
         .map(str::to_owned);
     Textures {
         skin,
@@ -252,6 +275,16 @@ fn valid_player_name(name: &str) -> bool {
     name.encode_utf16().count() <= 16 && name.encode_utf16().all(|c| c > 32 && c < 127)
 }
 
+/// `fetchByNameOrId`, against the service this game's session belongs to: ely.by's own lookup
+/// for an ely.by account, Mojang's discovery document otherwise.
+fn resolve_profile_key(key: &NameOrId) -> Option<ResolvedProfile> {
+    if crate::auth::current().is_some_and(|s| s.is_elyby()) {
+        return resolve_elyby_profile(key);
+    }
+    let doc = crate::auth::discovery().ok()?;
+    resolve_profile(key, &doc)
+}
+
 /// `fetchByNameOrId`: `getByName` answers `{id, name}`; `getProfileById`
 /// (`fetchProfile(id, requireSecure)`) answers `{id, name, properties}` —
 /// asked `unsigned=false` so the `textures` property is signed.
@@ -274,21 +307,49 @@ fn resolve_profile(key: &NameOrId, doc: &serde_json::Value) -> Option<ResolvedPr
     Some(ResolvedProfile {
         id: crate::auth::parse_uuid(v.get("id")?.as_str()?)?,
         name: v.get("name")?.as_str()?.to_owned(),
-        properties: v
-            .get("properties")?
-            .as_array()?
-            .iter()
-            .map(|p| {
-                Some((
-                    p.get("name")?.as_str()?.to_owned(),
-                    p.get("value")?.as_str()?.to_owned(),
-                    p.get("signature")
-                        .and_then(|s| s.as_str())
-                        .map(str::to_owned),
-                ))
-            })
-            .collect::<Option<Vec<_>>>()?,
+        properties: profile_properties(&v)?,
     })
+}
+
+/// `resolve_profile` against ely.by's session server, for an ely.by session: the Yggdrasil
+/// `api/users/profiles/minecraft/{name}` lookup, then `session/profile/{uuid}?unsigned=false`.
+fn resolve_elyby_profile(key: &NameOrId) -> Option<ResolvedProfile> {
+    let base = crate::auth::ely_session_server();
+    let id = match key {
+        NameOrId::Id(id) => *id,
+        NameOrId::Name(name) => {
+            if !valid_player_name(name) {
+                return None;
+            }
+            let body = http_get(&format!("{base}/api/users/profiles/minecraft/{name}"))?;
+            let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
+            crate::auth::parse_uuid(v.get("id")?.as_str()?)?
+        }
+    };
+    let body = http_get(&format!("{base}/session/profile/{id:032x}?unsigned=false"))?;
+    let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    Some(ResolvedProfile {
+        id: crate::auth::parse_uuid(v.get("id")?.as_str()?)?,
+        name: v.get("name")?.as_str()?.to_owned(),
+        properties: profile_properties(&v)?,
+    })
+}
+
+/// A profile answer's `properties` list, as `(name, value, signature)`.
+fn profile_properties(v: &serde_json::Value) -> Option<Vec<(String, String, Option<String>)>> {
+    v.get("properties")?
+        .as_array()?
+        .iter()
+        .map(|p| {
+            Some((
+                p.get("name")?.as_str()?.to_owned(),
+                p.get("value")?.as_str()?.to_owned(),
+                p.get("signature")
+                    .and_then(|s| s.as_str())
+                    .map(str::to_owned),
+            ))
+        })
+        .collect()
 }
 
 impl Default for Resolver {
@@ -358,9 +419,7 @@ impl Resolver {
         }
         let (key, send) = (key.clone(), self.send.clone());
         std::thread::spawn(move || {
-            let resolved = crate::auth::discovery()
-                .ok()
-                .and_then(|doc| resolve_profile(&key, &doc));
+            let resolved = resolve_profile_key(&key);
             let _ = send.send((key, resolved));
         });
         Resolve::Pending
@@ -669,9 +728,7 @@ fn read_offline_skin(path: &std::path::Path, model: &str) -> Result<(Vec<u8>, bo
 /// `fetchProfile(id, true)`, so its `textures` property is signed), or empty
 /// without an answer. Blocks on the network.
 pub fn fetch_own_properties(id: u128) -> Vec<(String, String, Option<String>)> {
-    crate::auth::discovery()
-        .ok()
-        .and_then(|doc| resolve_profile(&NameOrId::Id(id), &doc))
+    resolve_profile_key(&NameOrId::Id(id))
         .map(|p| p.properties)
         .unwrap_or_default()
 }

@@ -45,6 +45,41 @@ Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev) or 
 
 **You need** a Microsoft account that owns Java Edition ([why](docs/microsoft-account.md)) and a GPU with Vulkan or OpenGL 3.3 (Linux), Vulkan or DirectX 12 (Windows), or a Mac (Apple Silicon, or Intel from the next Nightly). An existing Minecraft install (official launcher, Prism, MultiMC...) is reused; without one, Play downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
 
+### ely.by accounts and offline play
+
+This fork, **ElyHorizon**, adds two ways to play without a Microsoft account that owns Java Edition:
+
+- **An [ely.by](https://ely.by) account.** Pick *Sign in with ely.by* on the sign-in screen, or run
+  `horizon-launcher account sign-in --ely`. ely.by signs in through its OAuth device flow, and the
+  launcher pulls the account's name, UUID, skin and cape from ely.by, so they show in the launcher
+  and in game.
+- **An offline name.** With no account at all, *Settings → Offline names* adds names that play
+  offline, each with a skin and cape you pick.
+
+What an ely.by account can play: offline-mode worlds and servers, and ely.by-compatible servers. It
+**can't join a server that checks sessions with Microsoft**, and the game says so instead of
+failing silently. LAN guests of an ely.by account are not supported yet (mixed providers), and chat
+is unsigned, because ely.by has no profile key pair. More: [Microsoft accounts, and ely.by](docs/microsoft-account.md#elyby-accounts).
+
+The launcher signs in with the `elyhorizon` OAuth application by default. To use your own
+registration, set `ELYBY_CLIENT_ID` or the launcher's `elyby-client-id` setting:
+
+```sh
+horizon-launcher settings elyby-client-id my-application
+```
+
+### Builds from this fork
+
+GitHub Actions builds the launcher for Linux x86-64 and Windows x64 on every push to `main` and
+every pull request (`.github/workflows/elyhorizon.yml`), runs its tests, and keeps the archives as
+workflow artifacts. Push a tag like `v1.0.0` — `git tag v1.0.0 && git push origin v1.0.0` — and the
+same workflow publishes a GitHub release with the archives and a `SHA256SUMS`. A manual run
+(`gh workflow run elyhorizon --ref main`) only builds.
+
+macOS is not built by this fork's workflow: GPUI needs Apple's Metal toolchain, which Horizon's own
+runners carry and GitHub's hosted ones don't.
+
+
 <table>
   <tr>
     <td width="50%"><img src="docs/media/launcher-play.webp" alt="The launcher's Home page: the selected instance ready to play, the version picker, Join a friend and the instance's tabs"></td>
