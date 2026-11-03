@@ -1,9 +1,9 @@
 > [!WARNING]
-> This repository is not in any way affiliated with Horizon original devs or Microsoft/Mojang.
+> This is **ElyHorizon** - a fork of Horizon that adds ely.by authentication support.
 >
-> The goal of this fork is to return local account play with **YOUR** minecraft assets without Microsoft profile authentication
+> This repository is not affiliated with the original Horizon developers or Microsoft/Mojang.
 >
-> You can download it's builds in [RELEASES](https://github.com/0CYBER/horizon-free/releases/latest) section
+> Download builds from the [RELEASES](https://github.com/TofuGG/ElyHorizon/releases) section
 >
 > Lower part of the README is fully original
 
@@ -27,7 +27,7 @@
   <a href="https://playhorizon.dev"><b>Website</b></a> ·
   <a href="#download"><b>Download</b></a> ·
   <a href="https://playhorizon.dev/docs/"><b>Documentation</b></a> ·
-  <a href="https://github.com/horizon-rust/horizon/releases"><b>Release notes</b></a> ·
+  <a href="https://github.com/TofuGG/ElyHorizon/releases"><b>Release notes</b></a> ·
   <a href="ROADMAP.md"><b>Roadmap</b></a> ·
   <a href="#project-status"><b>Project status</b></a> ·
   <a href="#contributing"><b>Contributing</b></a>
@@ -41,9 +41,9 @@ Minecraft: Java Edition 26.3, rewritten in Rust. Same worlds, same rules, same t
 
 ## Download
 
-Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev) or [the launcher releases](https://github.com/horizon-rust/horizon/releases?q=launcher-v&expanded=true) (Linux x86-64, macOS on Apple Silicon, macOS on Intel from the next Nightly, Windows x64). It installs and updates the game, prepares its files from your copy of Minecraft, and updates itself.
+Get **the ElyHorizon launcher** from [the releases page](https://github.com/TofuGG/ElyHorizon/releases) (Linux x86-64, Windows x64). It installs and updates the game, prepares its files from your copy of Minecraft, and updates itself.
 
-**You need** a Microsoft account that owns Java Edition ([why](docs/microsoft-account.md)) and a GPU with Vulkan or OpenGL 3.3 (Linux), Vulkan or DirectX 12 (Windows), or a Mac (Apple Silicon, or Intel from the next Nightly). An existing Minecraft install (official launcher, Prism, MultiMC...) is reused; without one, Play downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
+**You need** a GPU with Vulkan or OpenGL 3.3 (Linux), Vulkan or DirectX 12 (Windows), or a Mac (Apple Silicon or Intel). An existing Minecraft install (official launcher, Prism, MultiMC...) is reused; without one, Play downloads 26.3 from Mojang (requires a Microsoft account that owns the game). Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
 
 ### ely.by accounts and offline play
 
