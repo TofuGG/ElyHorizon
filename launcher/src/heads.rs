@@ -185,13 +185,9 @@ fn profile_face_with(
         .map(|(url, _)| url.clone())
         .or_else(|| session_skin(&account.uuid, cache, fetch));
     if let Some(url) = &url {
-        // Public Minecraft texture URLs only; never send credentials to a skin host.
-        let texture = url
-            .strip_prefix("https://textures.minecraft.net/texture/")
-            .or_else(|| url.strip_prefix("http://textures.minecraft.net/texture/"));
-        if texture
-            .is_some_and(|hash| !hash.is_empty() && hash.bytes().all(|b| b.is_ascii_hexdigit()))
-        {
+        // Public texture URLs only (Mojang's, or ely.by's for an ely.by account); never send
+        // credentials to a skin host.
+        if crate::skins::texture_url_allowed(url) {
             let file = cache.join(format!("{:x}.png", Sha1::digest(url.as_bytes())));
             if let Some(face) = std::fs::read(&file)
                 .ok()
@@ -267,6 +263,7 @@ mod tests {
                 "classic".into(),
             )),
             cape: None,
+            provider: crate::account::Provider::Microsoft,
         };
         let calls = std::cell::Cell::new(0);
         let fetch = |_: &str| {
@@ -335,6 +332,7 @@ mod tests {
             uuid: uuid.into(),
             skin: None,
             cape: None,
+            provider: crate::account::Provider::Microsoft,
         };
         // No default skins in `resources`: the face can only be the session's skin.
         let none = dir.join("no-resources");
@@ -370,6 +368,7 @@ mod tests {
                 "classic".into(),
             )),
             cape: None,
+            provider: crate::account::Provider::Microsoft,
         };
         let head = profile_face_with(&account, &dir.join("cache"), &dir, &|_| None).unwrap();
         assert_eq!(head[0], [3, 5, 7, 255]);

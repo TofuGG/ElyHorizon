@@ -204,6 +204,8 @@ fn serve(mock: Arc<Mutex<Mock>>) -> Endpoints {
         xbox_user: format!("{base}/xbl"),
         xsts: format!("{base}/xsts"),
         minecraft: format!("{base}/mc"),
+        ely_oauth: format!("{base}/ely"),
+        ely_services: format!("{base}/ely-services"),
     }
 }
 
@@ -238,6 +240,7 @@ fn the_whole_chain() {
                 "slim".into()
             )),
             cape: Some("http://textures.minecraft.net/texture/cape2".into()),
+            provider: Provider::Microsoft,
         }
     );
     assert_eq!(secrets.minecraft_token, "mc-token");
@@ -316,6 +319,7 @@ fn notch() -> Account {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     }
 }
 
@@ -338,6 +342,8 @@ fn offline() -> Endpoints {
         xbox_user: "http://127.0.0.1:9/xbl".into(),
         xsts: "http://127.0.0.1:9/xsts".into(),
         minecraft: "http://127.0.0.1:9/mc".into(),
+        ely_oauth: "http://127.0.0.1:9/ely".into(),
+        ely_services: "http://127.0.0.1:9/ely-services".into(),
     }
 }
 
@@ -413,6 +419,7 @@ fn splitscreen_gets_the_other_accounts_that_still_hold() {
         name: name.into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     let expired = Secrets {
         minecraft_expires_at: 0,
@@ -493,6 +500,7 @@ fn splitscreen_never_hands_over_an_account_sent_back_to_sign_in() {
         name: "Eve".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     accounts.add(&store, eve, &refused).unwrap();
     accounts.selected = Some(UUID.into());
@@ -671,6 +679,7 @@ fn any_owner_opens_the_gate_and_the_one_who_plays_brings_the_session() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     });
     accounts.selected = Some("other".into());
     let pass = launch(&ep, Some("test-client"), &store, &mut accounts).unwrap();
@@ -695,12 +704,18 @@ fn the_game_plays_only_as_an_account_that_owns_it() {
     let store = MemoryStore::default();
     let (_, ep) = mock(|_| {});
     // No account: no game.
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut Accounts::default());
+    let refused = launch_for_game(
+        &ep,
+        Some("test-client"),
+        &store,
+        &mut Accounts::default(),
+        false,
+    );
     assert_eq!(refused.unwrap_err(), NoOwner::default());
     // An owner, none selected: it plays, with its session.
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
     accounts.selected = None;
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false).unwrap();
     assert_eq!(pass.session.unwrap().0.name, "Notch");
     assert_eq!(accounts.selected.as_deref(), Some(UUID));
     // Another account plays: Notch owning the game doesn't let it play under a name of its own.
@@ -709,21 +724,23 @@ fn the_game_plays_only_as_an_account_that_owns_it() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     });
-    accounts.play_as("other").unwrap();
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap_err();
+    accounts.play_as_account("other").unwrap();
+    let refused =
+        launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false).unwrap_err();
     assert!(refused
         .to_string()
         .starts_with("Alex is no longer signed in"));
     // The services say the account that plays doesn't own the game.
     let (_, ep) = mock(|m| m.owns_game = false);
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
-    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false);
     assert_eq!(refused.unwrap_err(), NoOwner::default());
 }
 
 #[test]
-fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
+fn files_from_launchers_with_offline_names_keep_them_on_save() {
     let dir = std::env::temp_dir().join(format!("horizon-old-offline-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("skins")).unwrap();
@@ -742,22 +759,27 @@ fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
     let mut accounts = Accounts::load_from(&path);
     assert_eq!(accounts.accounts, vec![notch()]);
     assert!(accounts.selected().is_none());
-    // The account plays, and the save drops the names, their looks and their files.
+    // The account plays (the gate needs an owner), and the offline names stay: this fork keeps
+    // them beside the accounts, so a save keeps their looks and their files.
     let (_, ep) = mock(|_| {});
-    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts, false).unwrap();
     assert_eq!(pass.session.unwrap().0.uuid, UUID);
     accounts.save_to(&path).unwrap();
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["offline"], serde_json::json!(["Builder_1"]));
+    assert_eq!(saved["offline_selected"], serde_json::json!("Builder_1"));
     assert_eq!(
-        saved,
-        serde_json::json!({ "accounts": accounts.accounts, "selected": UUID })
+        saved["looks"],
+        serde_json::json!({ "builder_1": { "skin": true, "cape": true, "model": "slim" } })
     );
-    assert!(!dir.join("skins").exists());
-    // The developer option of 0.2.58 reads as nothing and is not written back.
+    assert!(dir.join("skins").join("builder_1.png").exists());
+    assert!(dir.join("skins").join("builder_1.cape.png").exists());
+    // The developer option is live in this fork: it is read, and written back while on.
     let settings = crate::backend::Settings::parse(r#"{"dev_offline": true, "keep_versions": 3}"#);
+    assert!(settings.dev_offline);
     let saved = serde_json::to_value(&settings).unwrap();
-    assert!(saved.get("dev_offline").is_none(), "{saved}");
+    assert_eq!(saved["dev_offline"], true);
     assert_eq!(saved["keep_versions"], 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -812,6 +834,7 @@ fn accounts_keep_secrets_in_the_store_only() {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     let secrets = Secrets {
         refresh_token: "r".into(),
@@ -1048,6 +1071,7 @@ fn has_owner_asks_the_selected_account_first() {
                 name: "Other".into(),
                 skin: None,
                 cape: None,
+                provider: Provider::Microsoft,
             },
             &secrets("x-token", false),
         )
@@ -1114,6 +1138,7 @@ fn session_files_are_private_and_complete() {
         name: "Notch".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     let secrets = Secrets {
         refresh_token: "r".into(),
@@ -1168,12 +1193,13 @@ fn play_as_picks_a_signed_in_account() {
             name: "Ludo".into(),
             skin: None,
             cape: None,
+            provider: Provider::Microsoft,
         }],
         ..Accounts::default()
     };
-    a.play_as("abc").unwrap();
+    a.play_as_account("abc").unwrap();
     assert_eq!(a.selected().unwrap().name, "Ludo");
-    assert!(a.play_as("zzz").is_err());
+    assert!(a.play_as_account("zzz").is_err());
     assert_eq!(a.selected.as_deref(), Some("abc"));
     // An accounts.json written now has nothing but the accounts and who plays.
     assert_eq!(
@@ -2369,27 +2395,34 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     });
-    // This launch plays as Alex: it is Alex who is told to sign in again (Notch owning the game
-    // doesn't let Alex play), and Notch is still the one `account select` picked.
-    let refused = launch_as(&offline(), Some("test-client"), &store, &mut accounts, alex);
-    assert!(refused
-        .unwrap_err()
+    // This launch plays as Alex: Notch's ownership opens the gate, and it is Alex who is told
+    // to sign in again, so Alex played. Notch is still the one `account select` picked.
+    let pass = launch_as(
+        &offline(),
+        Some("test-client"),
+        &store,
+        &mut accounts,
+        &Player::Microsoft(alex.into()),
+    )
+    .unwrap();
+    assert!(pass.session.is_none());
+    assert!(pass
+        .offline
+        .unwrap()
         .starts_with("Alex is no longer signed in"));
-    assert_eq!(accounts.selected.as_deref(), Some(UUID));
-    // Notch plays with the last answer while the services can't be reached.
-    let pass = launch_as(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
-    assert!(pass.session.is_none() && pass.offline.is_some());
+    assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));
     // An account that isn't in the launcher is refused, and changes nothing either.
     let gone = launch_as(
         &offline(),
         Some("test-client"),
         &store,
         &mut accounts,
-        "not-signed-in",
+        &Player::Microsoft("not-signed-in".into()),
     );
     assert_eq!(gone.unwrap_err(), "That account isn't signed in.");
-    assert_eq!(accounts.selected.as_deref(), Some(UUID));
+    assert_eq!(accounts.player(), Player::Microsoft(UUID.into()));
 }
 
 #[test]
@@ -2401,7 +2434,9 @@ fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
         microsoft: url.clone(),
         xbox_user: url.clone(),
         xsts: url.clone(),
-        minecraft: url,
+        minecraft: url.clone(),
+        ely_oauth: url.clone(),
+        ely_services: url,
     };
     let store = MemoryStore::default();
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
@@ -2414,6 +2449,7 @@ fn splitscreen_stops_renewing_other_accounts_once_out_of_time() {
         name: "Cal".into(),
         skin: None,
         cape: None,
+        provider: Provider::Microsoft,
     };
     accounts.add(&store, cal, &expired).unwrap();
     accounts.selected = Some(UUID.into());

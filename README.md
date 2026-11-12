@@ -1,3 +1,14 @@
+> [!WARNING]
+> This is **ElyHorizon** - a fork of Horizon that adds ely.by authentication support.
+>
+> This repository is not affiliated with the original Horizon developers or Microsoft/Mojang.
+>
+> Download builds from the [RELEASES](https://github.com/TofuGG/ElyHorizon/releases) section
+>
+> Lower part of the README is fully original
+
+<br><br><br><br>
+
 <p align="center">
   <img src="docs/media/banner.webp" alt="Horizon: the game you know, rebuilt in Rust" width="100%">
 </p>
@@ -7,6 +18,7 @@
   <a href="#download"><b>Download</b></a> ·
   <a href="https://playhorizon.dev/docs/"><b>Docs</b></a> ·
   <a href="https://discord.gg/playhorizon"><b>Discord</b></a> ·
+  <a href="https://github.com/TofuGG/ElyHorizon/releases"><b>Release notes</b></a> ·
   <a href="ROADMAP.md"><b>Roadmap</b></a> ·
   <a href="#contributing"><b>Contributing</b></a>
 </p>
@@ -62,7 +74,7 @@ Everything below is in the current release.
 
 ## Download
 
-Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev), or from [the launcher releases](https://github.com/horizon-rust/horizon/releases?q=launcher&expanded=true):
+Get **the ElyHorizon launcher** from [the ElyHorizon releases](https://github.com/TofuGG/ElyHorizon/releases) (Linux x86-64 and Windows x64 are built by this fork; the table lists every platform the launcher supports):
 
 | Platform | File | Needs |
 | --- | --- | --- |
@@ -72,7 +84,42 @@ Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev), or
 | macOS, Intel | `horizon-launcher-macos-x64.dmg` | macOS 12 or later |
 | Linux x86-64 | `horizon-launcher-linux-x86_64.AppImage` or `.tar.gz` | a glibc distribution, X11 or Wayland, a GPU with Vulkan or OpenGL 3.3 |
 
-**You also need a Microsoft account that owns Minecraft: Java Edition.** You sign in with it in the launcher, which plays only with an account that owns the game ([why](docs/microsoft-account.md)). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
+**You also need a Microsoft account that owns Minecraft: Java Edition to download the game**, unless an existing install is reused ([why](docs/microsoft-account.md)). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang for your account. This fork also plays with an ely.by account or an offline name, below. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
+
+### ely.by accounts and offline play
+
+This fork, **ElyHorizon**, adds two ways to play without a Microsoft account that owns Java Edition:
+
+- **An [ely.by](https://ely.by) account.** Pick *Sign in with ely.by* on the sign-in screen, or run
+  `horizon-launcher account sign-in --ely`. ely.by signs in through its OAuth device flow, and the
+  launcher pulls the account's name, UUID, skin and cape from ely.by, so they show in the launcher
+  and in game.
+- **An offline name.** With no account at all, *Settings → Offline names* adds names that play
+  offline, each with a skin and cape you pick.
+
+What an ely.by account can play: offline-mode worlds and servers, and ely.by-compatible servers. It
+**can't join a server that checks sessions with Microsoft**, and the game says so instead of
+failing silently. LAN guests of an ely.by account are not supported yet (mixed providers), and chat
+is unsigned, because ely.by has no profile key pair. More: [Microsoft accounts, and ely.by](docs/microsoft-account.md#elyby-accounts).
+
+The launcher signs in with the `elyhorizon` OAuth application by default. To use your own
+registration, set `ELYBY_CLIENT_ID` or the launcher's `elyby-client-id` setting:
+
+```sh
+horizon-launcher settings elyby-client-id my-application
+```
+
+### Builds from this fork
+
+GitHub Actions builds the launcher for Linux x86-64 and Windows x64 on every push to `main` and
+every pull request (`.github/workflows/elyhorizon.yml`), runs its tests, and keeps the archives as
+workflow artifacts. Push a tag like `v0.2.98-ely-v2` — `git tag v0.2.98-ely-v2 && git push elyhorizon v0.2.98-ely-v2` — and the
+same workflow publishes a GitHub release with the archives and a `SHA256SUMS`. A manual run
+(`gh workflow run elyhorizon --ref main`) only builds.
+
+macOS is not built by this fork's workflow: GPUI needs Apple's Metal toolchain, which Horizon's own
+runners carry and GitHub's hosted ones don't.
+
 
 <table>
   <tr>

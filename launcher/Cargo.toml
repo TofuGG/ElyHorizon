@@ -1,6 +1,6 @@
 [package]
 name = "horizon-launcher"
-version = "0.2.0"
+version = "0.2.10"
 edition = "2021"
 license = "MIT"
 description = "Downloads, prepares and starts Horizon builds"
@@ -43,6 +43,10 @@ horizon-theme = { path = "../crates/horizon-theme" }
 # The engine, through the platform's public API (docs/layers.md): the pinned version, No AI, the preparer,
 # level.dat and servers.dat (the worlds and server lists of instances), and the official server's SRV record.
 horizon-platform = { path = "../crates/horizon-platform", features = ["prepare", "protocol", "world"] }
+horizon-core = { path = "../crates/horizon-core" }
+horizon-prepare = { path = "../crates/horizon-prepare" }
+horizon-protocol = { path = "../crates/horizon-protocol" }
+horizon-world = { path = "../crates/horizon-world" }
 horizon-cosmetics = { path = "../crates/horizon-cosmetics" }
 glam = "0.30"
 # `horizon-launcher mcp`: the Model Context Protocol, shared with horizon-ctl and horizon-server.

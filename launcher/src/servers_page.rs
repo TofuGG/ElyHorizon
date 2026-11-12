@@ -60,6 +60,8 @@ pub(super) enum Field {
     /// Home's memory row (`launch_page.rs`).
     MemoryLimit,
     DeleteServer,
+    /// Settings' new offline name (`switch_page.rs`).
+    OfflineName,
     /// Settings' accent as hex (`themes_page.rs`).
     AccentHex,
     /// The Shop's gift recipient (`wardrobe_page/shop/basket.rs`).
@@ -67,7 +69,7 @@ pub(super) enum Field {
 }
 
 impl Field {
-    const ALL: [Field; 24] = [
+    const ALL: [Field; 25] = [
         Field::Name,
         Field::Seed,
         Field::Players,
@@ -89,6 +91,7 @@ impl Field {
         Field::LaunchEnv,
         Field::PostExit,
         Field::MemoryLimit,
+        Field::OfflineName,
         Field::DeleteServer,
         Field::AccentHex,
         Field::ShopGift,
@@ -1284,6 +1287,7 @@ impl Launcher {
                 self.save_launch()
             }
             Field::MemoryLimit => self.memory_enter(),
+            Field::OfflineName => self.offline_name_enter(),
             Field::ShopGift => self.shop.find_soon = true,
             Field::ServerName | Field::ServerAddress => self.add_server(),
         }

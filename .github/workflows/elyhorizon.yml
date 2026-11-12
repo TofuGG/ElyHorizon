@@ -1,0 +1,146 @@
+name: elyhorizon
+
+# ElyHorizon's own build and release: it needs no repository variables, no signing keychain and no
+# self-hosted runner, so it works in this fork as it is.
+#
+# - Every push to main and every pull request: build the launcher, run its tests, and keep the
+#   archives as workflow artifacts (7 days).
+# - A tag like v1.0.0 (or a manual run on a tag): the same build, then a GitHub release with the
+#   archives attached and generated notes.
+# - Manual runs on a branch only build.
+#
+# The upstream workflows (launcher.yml, game-build.yml, nightly-*.yml) are Horizon's release train:
+# they expect Horizon's own runners, signing keys and release labels, and are not used here.
+#
+#   gh workflow run elyhorizon --ref main            # build only
+#   git tag v1.0.0 && git push origin v1.0.0        # build and publish
+#
+# Windows ships one archive (the launcher updates itself from it) plus horizon-launcher-setup.exe,
+# the same binary under the name that opens the per-user installer. Linux ships the .tar.gz the
+# launcher updates itself from, and an AppImage for players without a distribution package.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: elyhorizon-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # Test and smoke runs never reach the telemetry server (docs/telemetry.md).
+  HORIZON_TELEMETRY_URL: "off"
+  HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
+
+jobs:
+  build:
+    name: launcher (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            asset: horizon-launcher-linux-x86_64
+            binary: horizon-launcher
+            rustflags: ""
+          - name: windows
+            os: windows-latest
+            asset: horizon-launcher-windows-x64
+            binary: horizon-launcher.exe
+            # The C runtime linked in: without it the launcher asks for VCRUNTIME140.dll, which
+            # only the Visual C++ redistributable installs.
+            rustflags: -C target-feature=+crt-static
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      BIN: target/release
+      # Horizon's Azure app for Microsoft sign-in (docs/microsoft-account.md). Unset in this fork,
+      # so the launcher says Microsoft sign-in is not configured; ely.by and offline names work.
+      HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
+      # ely.by's OAuth application: the launcher's own `elyhorizon` registration unless the
+      # repository sets ELYBY_CLIENT_ID (`||` keeps an unset variable from becoming an empty one).
+      ELYBY_CLIENT_ID: ${{ vars.ELYBY_CLIENT_ID || 'elyhorizon' }}
+    defaults:
+      run:
+        working-directory: launcher
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+          shared-key: elyhorizon-launcher-${{ matrix.name }}
+      - name: Linux libraries GPUI links to
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libfontconfig-dev libvulkan-dev libasound2-dev patchelf
+      # Every test target: the library, the binary, tests/ (offline play without an owner, the
+      # startup smoke tests).
+      - run: cargo test --release --locked
+      - run: cargo build --release --locked
+      - name: The version prints
+        run: |
+          out=$("$BIN/${{ matrix.binary }}" --version)
+          echo "$out"
+          expected=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [[ "$out" == "horizon-launcher $expected" ]] || {
+            echo "::error::expected horizon-launcher $expected"; exit 1; }
+      - name: Package
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          rm -rf dist out && mkdir -p dist out
+          cp "$BIN/${{ matrix.binary }}" dist/
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            tar -C dist -czf "out/${{ matrix.asset }}.tar.gz" "${{ matrix.binary }}"
+            # What a player downloads and double-clicks; it replaces itself (packaging/linux/appimage.sh).
+            ../packaging/linux/appimage.sh "$BIN/${{ matrix.binary }}" "$version" out
+          else
+            (cd dist && 7z a "../out/${{ matrix.asset }}.zip" "${{ matrix.binary }}")
+            # The same binary under the setup's name shows the per-user installer
+            # (launcher/src/installer.rs). The ZIP keeps the launcher's own name.
+            cp "$BIN/${{ matrix.binary }}" out/horizon-launcher-setup.exe
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: launcher/out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: release ${{ github.ref_name }}
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish ${{ github.ref_name }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

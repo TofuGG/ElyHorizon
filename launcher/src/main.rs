@@ -68,6 +68,7 @@ mod servers_page;
 mod setup_page;
 mod shell;
 mod shortcut_page;
+mod skin_page;
 mod sky;
 mod specimen;
 mod sticky;
@@ -313,6 +314,8 @@ struct Launcher {
     /// Where the mouse went down to close a menu by pressing outside it, so that the
     /// same press, ending on the menu's own button, doesn't open it again.
     menu_closed_at: Option<Point<Pixels>>,
+    /// Settings > Account's skin panel for an offline name (`skin_page.rs`).
+    skin: Option<skin_page::SkinPanel>,
     /// The Wardrobe page's account and outfit (`wardrobe_page.rs`).
     wardrobe: Option<wardrobe_page::Wardrobe>,
     /// Name tag styles' marks; they outlive the account's `wardrobe`.
@@ -372,6 +375,8 @@ struct Launcher {
     auth_next: u64,
     sign_in: Option<SignIn>,
     sign_in_state: Option<SignInState>,
+    /// Which service the sign-in sheet is signing in to: Microsoft, or ely.by.
+    sign_in_provider: account::Provider,
     /// What to say when the keychain doesn't keep sign-ins ([`account::no_keychain`]).
     keychain: Option<String>,
     /// Whether an account here owns the game, by the keychain's last answers (the owner gate);
@@ -493,6 +498,8 @@ struct Launcher {
     aside: while_playing::Aside,
     /// The selected instance's desktop shortcut (`shortcut_page.rs`).
     shortcuts: shortcut_page::Shortcuts,
+    /// The name the game made up for an offline player (`horizon-player.txt`), for the top bar.
+    offline_name: Option<String>,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<horizon_launcher::servers::Entry>,
     /// The pixel art made for this window (`art.rs`), and pictures downloaded by URL.
@@ -547,6 +554,8 @@ impl Launcher {
         })
         .detach();
         let mut settings = Settings::load();
+        // Horizon-free: allow playing without a Microsoft account that owns the game.
+        settings.dev_offline = backend::OFFLINE_PLAY;
         i18n::set(settings.language());
         if settings.minecraft_dir.is_none() {
             settings.minecraft_dir = backend::default_minecraft_dir();
@@ -636,6 +645,7 @@ impl Launcher {
             row_menu: Default::default(),
             look: horizon_theme::glass::Glass::default_look(),
             menu_closed_at: None,
+            skin: None,
             wardrobe: None,
             wardrobe_marks: Default::default(),
             wardrobe_reload: false,
@@ -684,6 +694,7 @@ impl Launcher {
             auth_next: 0,
             sign_in: None,
             sign_in_state: None,
+            sign_in_provider: account::Provider::Microsoft,
             keychain: None,
             owner: None,
             owner_screen_open: false,
@@ -750,6 +761,7 @@ impl Launcher {
             console: Default::default(),
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
+            offline_name: offline_name(),
             side_servers: horizon_launcher::servers::list(),
             sky: sky::Sky::default(),
             scene: cx.new(|_| scene::Scene::new()),
@@ -869,6 +881,8 @@ impl Launcher {
         // The CLI or another window may have changed the accounts: read them again (a small
         // file, once a switch).
         self.accounts = Accounts::load();
+        // The game may have made up a name since: read it again too.
+        self.offline_name = offline_name();
         // Each check reads the keychain (a prompt on macOS): page switches check every account
         // at most once a minute, and an account added meanwhile at once.
         if self
@@ -1919,6 +1933,8 @@ impl Launcher {
                 natives: false,
             });
         let mods_tx = self.mods.tx.clone();
+        // Horizon-free: offline names play without an account that owns the game.
+        let offline_without_owner = self.settings.dev_offline;
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
@@ -1931,7 +1947,7 @@ impl Launcher {
                 }
             }
             backend::play_step("reading the sign-in");
-            let session = account::session_for_game(&backend::game_home());
+            let session = account::session_for_game(&backend::game_home(), offline_without_owner);
             backend::play_step("starting the game");
             let _ = tx.send(Msg::Session(session));
         });
@@ -2036,11 +2052,22 @@ impl Launcher {
         std::thread::spawn(|| {
             horizon_launcher::private_window::detected();
         });
+        self.sign_in_provider = target
+            .as_ref()
+            .map_or(account::Provider::Microsoft, |a| a.provider);
         self.sign_in = Some(match &target {
             Some(account) => SignIn::start_for(account.clone()),
             None => SignIn::start(),
         });
         self.sign_in_target = target;
+        self.sign_in_state = Some(SignInState::Starting);
+    }
+
+    /// A new account from ely.by: its own device-code flow, in the same sheet.
+    fn begin_elyby_sign_in(&mut self) {
+        self.cancel_sign_in();
+        self.sign_in_provider = account::Provider::ElyBy;
+        self.sign_in = Some(SignIn::start_elyby());
         self.sign_in_state = Some(SignInState::Starting);
     }
 
@@ -2697,23 +2724,48 @@ fn slot_row(
         .children(right)
 }
 
-/// Microsoft account actions go below the profile in the fixed-width glass card.
+/// An account in the Account plate: its head, name and state on the left, its actions on the
+/// right. The plate is as wide as the page, so the state shortens rather than pushing the
+/// buttons under the name the way the narrow Microsoft card had to.
 fn account_row(
     slot: Option<Div>,
     name: impl IntoElement,
     detail: Option<AnyElement>,
     actions: Div,
-    t: &Theme,
 ) -> Div {
-    if glass_ui::flat() {
-        return div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .child(slot_row(slot, name, detail, None, t))
-            .child(actions.flex_wrap().px(px(16.)).pb(px(12.)));
-    }
-    slot_row(slot, name, detail, Some(actions.into_any_element()), t)
+    div()
+        .flex()
+        .items_center()
+        .gap(px(14.))
+        .px(px(16.))
+        .py(px(12.))
+        .children(slot.map(|s| s.rounded(px(8.)).overflow_hidden()))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap(px(4.))
+                .child(
+                    glass_ui::text(15., FontWeight::SEMIBOLD, 1.)
+                        .line_height(px(21.))
+                        .child(name),
+                )
+                .children(detail.map(|d| {
+                    glass_ui::text(13., FontWeight::NORMAL, 0.6)
+                        .line_height(px(19.5))
+                        .child(d)
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(8.))
+                .child(actions),
+        )
 }
 
 /// A plate that stands apart from the page: notices, the console, the agents note.
@@ -2770,6 +2822,21 @@ fn centered(text_: &str, t: &Theme) -> Div {
         .gap(px(16.))
         .py(px(48.))
         .child(text(theme::UI).text_color(t.muted).child(text_.to_string()))
+}
+
+/// The name the game made up for a player without an account, once it has run.
+fn offline_name() -> Option<String> {
+    player_name(&std::fs::read_to_string(backend::game_home().join("horizon-player.txt")).ok()?)
+}
+
+/// The name in `horizon-player.txt`: the game writes `name:Player12345` (horizon-client's
+/// offline_name.rs).
+fn player_name(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("name:"))
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
 }
 
 /// `1234` as `1,234`.
@@ -3143,6 +3210,14 @@ impl Launcher {
             }
             foot = foot.child(side);
         }
+        // Horizon-Free: link to the fork's repository.
+        foot = foot.child(div().h(px(1.)).w_full().bg(t.rule).my(px(4.)));
+        foot = foot.child(link(
+            "horizon-free",
+            "Horizon-Free",
+            "globe",
+            "https://github.com/0CYBER/horizon-free".to_string(),
+        ));
         if !self.links.sponsor.is_empty() {
             foot = foot.child(link(
                 "sponsor",
@@ -3187,7 +3262,7 @@ impl Launcher {
                 .child(
                     shell::text(theme::night::TITLE, shell::c(n.ink))
                         .font_family(theme::DISPLAY_FONT)
-                        .child("Horizon"),
+                        .child("ElyHorizon"),
                 )
         });
         shell::sidebar_plate(&t)
@@ -3766,7 +3841,7 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child(tr("Horizon crashed")),
+                    .child(tr("ElyHorizon crashed")),
             );
         if !crash.summary.is_empty() {
             body = body.child(div().text_color(t.ink_soft).child(crash.summary));
@@ -3980,6 +4055,7 @@ impl Launcher {
             );
         }
         let (accounts, n) = self.account_rows(cx);
+        let (offline, _) = self.offline_rows(n, cx);
         let group = |label: &'static str, icon: &'static str| {
             section_title(label, icon, &t).mt(px(20.)).mb(px(12.))
         };
@@ -3998,8 +4074,9 @@ impl Launcher {
                     .flex_col()
                     .child(group("Account", "user").mt_0())
                     .child(accounts)
+                .child(offline)
                     .child(group("Updates", "reload"))
-                    .child(index_row(n + 1, "Horizon", Some(plain(&horizon)), horizon_action, &t))
+                    .child(index_row(n + 1, "ElyHorizon", Some(plain(&horizon)), horizon_action, &t))
                     .child(index_row(
                         n + 1,
                         tr("Launcher"),
@@ -4420,7 +4497,8 @@ impl Launcher {
         for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
             let plays = selected.as_ref() == Some(&a.uuid);
             let uuid = a.uuid.clone();
-            let mut actions = div().flex().gap(px(4.));
+            let provider = a.provider;
+            let mut actions = div().flex().flex_wrap().gap(px(4.));
             if plays {
                 actions = actions.child(
                     button(format!("offline-{i}"), "Play offline", Kind::Ghost, &t).on_click(
@@ -4435,11 +4513,14 @@ impl Launcher {
                     ),
                 );
             } else {
-                let uuid = uuid.clone();
+                let who = match provider {
+                    account::Provider::Microsoft => account::Player::Microsoft(uuid.clone()),
+                    account::Provider::ElyBy => account::Player::ElyBy(uuid.clone()),
+                };
                 actions = actions.child(
                     button(format!("select-{i}"), "Play as", Kind::Secondary, &t).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&uuid);
+                            this.play_as(who.clone());
                             cx.notify();
                         }),
                     ),
@@ -4450,7 +4531,10 @@ impl Launcher {
                 .as_ref()
                 .filter(|a| a.uuid == uuid)
                 .and_then(|_| match self.sign_in_state.as_ref() {
-                    Some(SignInState::Starting) => Some("Asking Microsoft…"),
+                    Some(SignInState::Starting) => Some(match self.sign_in_provider {
+                        account::Provider::Microsoft => "Asking Microsoft…",
+                        account::Provider::ElyBy => "Asking ely.by…",
+                    }),
                     Some(SignInState::Code(_)) => Some("Waiting for browser sign-in…"),
                     Some(SignInState::Working(phase)) => Some(phase.label()),
                     _ => None,
@@ -4517,11 +4601,18 @@ impl Launcher {
                 a.name.clone(),
                 Some(
                     div()
-                        .child(tr(if plays {
-                            "Microsoft account · plays"
-                        } else {
-                            "Microsoft account"
-                        }))
+                        .child(match a.provider {
+                            account::Provider::Microsoft => tr(if plays {
+                                "Microsoft account · plays"
+                            } else {
+                                "Microsoft account"
+                            }),
+                            account::Provider::ElyBy => tr(if plays {
+                                "ely.by account · plays"
+                            } else {
+                                "ely.by account"
+                            }),
+                        })
                         .child(account_status_line(status, progress, &t))
                         .when(!busy, |row| {
                             row.when_some(status.filter(|s| s.message != s.label()), |row, s| {
@@ -4531,7 +4622,6 @@ impl Launcher {
                         .into_any_element(),
                 ),
                 actions,
-                &t,
             ));
         }
         (rows, n)
@@ -4547,8 +4637,10 @@ impl Launcher {
             Some(SignInState::Starting | SignInState::Code(_) | SignInState::Working(_))
         );
         let detail = match &self.sign_in_state {
-            _ if !configured => div().child(tr(account::NOT_CONFIGURED)),
-            Some(SignInState::Starting) => div().child(tr("Asking Microsoft…")),
+            Some(SignInState::Starting) => div().child(tr(match self.sign_in_provider {
+                account::Provider::Microsoft => "Asking Microsoft…",
+                account::Provider::ElyBy => "Asking ely.by…",
+            })),
             Some(SignInState::Working(phase)) => div().child(tr(phase.label())),
             Some(SignInState::Code(code)) => div()
                 .flex()
@@ -4565,7 +4657,9 @@ impl Launcher {
                         .child(code.user_code.clone()),
                 )
                 .when(!microsoft::has_private_window(), |col| {
-                    col.child(tr("Open this link in a private window to pick another account."))
+                    col.child(tr(
+                        "Open this link in a private window to pick another account.",
+                    ))
                 })
                 .child({
                     let uri = code.verification_uri.clone();
@@ -4583,9 +4677,18 @@ impl Launcher {
                 div().child(trf("Signed in as {name}.", &[("name", &a.name)]))
             }
             Some(SignInState::Done(Err(e))) => div().text_color(t.danger).child(e.clone()),
-            None if self.accounts.accounts.is_empty() => div().child(tr(
-                "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
-            )),
+            None if self.accounts.accounts.is_empty() => {
+                if configured {
+                    div().child(tr(
+                        "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
+                    ))
+                } else {
+                    div().child(tr(
+                        "Sign in with ely.by to play on ely.by servers and offline-mode servers, \
+                         with your name and skin.",
+                    ))
+                }
+            }
             None => div().child(tr("Add another account.")),
         };
         let detail = if let Some(target) = &self.sign_in_target {
@@ -4610,9 +4713,7 @@ impl Launcher {
                 .child(div().child(said)),
             _ => detail,
         };
-        let action = if !configured {
-            None
-        } else if let Some(SignInState::Code(code)) = &self.sign_in_state {
+        let action = if let Some(SignInState::Code(code)) = &self.sign_in_state {
             let (uri, user_code) = (code.verification_uri.clone(), code.user_code.clone());
             let (private_uri, link_uri) = (uri.clone(), uri.clone());
             // A private window picks the account; without one the link is for the player to carry over.
@@ -4634,6 +4735,7 @@ impl Launcher {
             Some(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(4.))
                     .child(
                         button("sign-in-copy", "Copy code", Kind::Secondary, &t).on_click(
@@ -4672,22 +4774,35 @@ impl Launcher {
         } else {
             let target = self.sign_in_target.as_ref().map(|a| a.uuid.clone());
             let targeted = target.is_some();
-            // Re-signing one account names it; adding one is Microsoft's own button.
-            let sign_in = if targeted {
-                button("sign-in", "Sign in again", Kind::Secondary, &t)
+            let mut actions = div().flex().flex_wrap().gap(px(4.));
+
+            // When adding a new account (not re-signing), show ely.by button
+            if !targeted {
+                actions = actions.child(
+                    button(
+                        "sign-in-elyby",
+                        tr("Sign in with ely.by"),
+                        Kind::Secondary,
+                        &t,
+                    )
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.begin_elyby_sign_in();
+                        cx.notify();
+                    })),
+                );
             } else {
-                microsoft::sign_in_button("sign-in", &t)
-            };
-            let mut actions = div().flex().gap(px(4.)).child(sign_in.on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    if let Some(uuid) = &target {
-                        this.re_sign_in(uuid);
-                    } else {
-                        this.start_sign_in();
-                    }
-                    cx.notify();
-                },
-            )));
+                // Re-signing an existing account
+                let sign_in = button("sign-in", "Sign in again", Kind::Secondary, &t);
+                actions = actions.child(sign_in.on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        if let Some(uuid) = &target {
+                            this.re_sign_in(uuid);
+                        }
+                        cx.notify();
+                    },
+                )));
+            }
+
             if targeted {
                 actions = actions.child(
                     button("sign-in-cancel-target", "Cancel", Kind::Ghost, &t).on_click(
@@ -4702,7 +4817,7 @@ impl Launcher {
         };
         let title = match &self.sign_in_target {
             Some(target) => trf("Sign in again as {name}", &[("name", &target.name)]),
-            None if self.accounts.accounts.is_empty() => tr("Microsoft account").to_owned(),
+            None if self.accounts.accounts.is_empty() => tr("ely.by account").to_owned(),
             None => tr("Another account").to_owned(),
         };
         (title, detail, action)
@@ -5772,7 +5887,7 @@ fn main() {
                     titlebar: Some(titlebar::options()),
                     #[cfg(target_os = "linux")]
                     window_decorations: Some(gpui::WindowDecorations::Client),
-                    app_id: Some("horizon-launcher".into()),
+                    app_id: Some("elyhorizon-launcher".into()),
                     // GPUI draws a window without focus at most every 33 ms to save energy. A
                     // benchmark's window often starts without it (KDE keeps focus from windows
                     // a background process opens), and it measures drawing, not that limit.
@@ -5939,6 +6054,7 @@ mod tests {
             name: "TestAccount".into(),
             skin: None,
             cape: None,
+            provider: horizon_launcher::account::Provider::Microsoft,
         }));
         assert!(sign_in_change(&mut shown, SignInState::Starting).is_some());
         assert!(sign_in_change(&mut shown, SignInState::Starting).is_none());
@@ -5968,6 +6084,18 @@ mod tests {
             &menus[0].items[0],
             gpui::MenuItem::Action { name, .. } if name == "Quit Horizon Launcher"
         ));
+    }
+
+    #[test]
+    fn the_games_offline_name_is_read() {
+        use super::player_name;
+        assert_eq!(
+            player_name("name:Player63010\n").as_deref(),
+            Some("Player63010")
+        );
+        assert_eq!(player_name("name:Steve\r\n").as_deref(), Some("Steve"));
+        assert_eq!(player_name("Player63010\n"), None);
+        assert_eq!(player_name(""), None);
     }
 
     #[test]

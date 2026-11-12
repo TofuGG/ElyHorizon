@@ -1149,5 +1149,7 @@
   "horizon.studio.topbar.split_scene": "Split Scene",
   "horizon.recipes.fuel.options": "Hold SHIFT to pin this tooltip, then click an ingredient to view recipes.",
   "horizon.recipes.fuel.any": "Any Fuel",
-  "horizon.recipes.fuel.minecraft": "Minecraft"
+  "horizon.recipes.fuel.minecraft": "Minecraft",
+  "horizon.multiplayer.elyby_needs_microsoft_server": "This server uses Microsoft authentication; ely.by accounts can't join it.",
+  "horizon.multiplayer.disconnect.elyby_guest_unsupported": "The host of this LAN world signs in with ely.by; guests can't be verified against it yet."
 }

@@ -151,7 +151,7 @@ python3 tools/lang_coverage.py --summary   # the keys each language still misses
 
 - Start parity work from the port ledger, not grep: `python3 tools/port_ledger.py issue N` (or `where
   Class.method`, `what file:line`), and `check --base origin/main` before the PR. How:
-  [.claude/skills/vanilla-parity/SKILL.md](.claude/skills/vanilla-parity/SKILL.md), [docs/port-ledger.md](docs/port-ledger.md).
+  [docs/port-ledger.md](docs/port-ledger.md).
 - Decompiled sources: `.local/minecraft/26.3/sources/{client,server}/` (`python3 tools/lab.py decompile`).
 - Bytecode queries (callers through lambdas, every overload):
   `python3 tools/rea_vanilla.py method net.minecraft.world.level.block.DispenserBlock dispenseFrom`

@@ -2695,7 +2695,7 @@ version = "0.1.0"
 
 [[package]]
 name = "horizon-launcher"
-version = "0.2.0"
+version = "0.2.10"
 dependencies = [
  "base64",
  "chacha20poly1305",
@@ -2710,6 +2710,7 @@ dependencies = [
  "gpui-fast",
  "gpui-fast-platform",
  "horizon-bench",
+ "horizon-core",
  "horizon-cosmetics",
  "horizon-friends",
  "horizon-mcp",
@@ -2717,10 +2718,13 @@ dependencies = [
  "horizon-mods",
  "horizon-platform",
  "horizon-port-pack",
+ "horizon-prepare",
+ "horizon-protocol",
  "horizon-release-sign",
  "horizon-shader-api",
  "horizon-telemetry",
  "horizon-theme",
+ "horizon-world",
  "image",
  "keyring",
  "libc",

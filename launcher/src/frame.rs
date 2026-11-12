@@ -6,6 +6,7 @@ use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
 use crate::instances_page::java_line;
 use gpui::{anchored, canvas, deferred, point};
+use horizon_launcher::account::Player;
 use horizon_launcher::instances::{Icon, Instance, Kind as InstanceKind};
 use horizon_theme::glass::{fill, ink, radius};
 use std::cell::RefCell;
@@ -638,7 +639,12 @@ impl Launcher {
             }));
 
         let (name, how) = self.who_plays();
-        let face = self.accounts.selected().map(|a| a.uuid.clone());
+        let face = match self.accounts.player() {
+            Player::Microsoft(_) | Player::ElyBy(_) => {
+                self.accounts.selected().map(|a| a.uuid.clone())
+            }
+            _ => None,
+        };
         let open = self.account_menu;
         let chip =
             div()
@@ -715,13 +721,16 @@ impl Launcher {
                     .bg(white(fill::BUTTON))
                     .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
                     .cursor_pointer()
-                    .child(microsoft::logo(16.))
                     .child(
                         ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                            .child(tr("Sign in with Microsoft")),
+                            .child(tr("Sign in with ely.by")),
                     )
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
+                        this.begin_elyby_sign_in();
+                        // Open settings page to show the sign-in process
+                        if this.page != Page::Settings {
+                            this.go(Page::Settings);
+                        }
                         cx.notify();
                     })),
                 &t,
@@ -795,7 +804,7 @@ impl Launcher {
         }
         let t = self.theme;
         let soft = self.look.accent_soft;
-        let now = self.accounts.selected().map(|a| a.uuid.clone());
+        let now = self.accounts.player();
         let mut menu = ui::popover(250.)
             .id("account-menu")
             .occlude()
@@ -805,7 +814,7 @@ impl Launcher {
                 cx.notify();
             }));
         for (i, (who, name, how)) in self.players().into_iter().enumerate() {
-            let chosen = Some(&who) == now.as_ref();
+            let chosen = who == now;
             let id = SharedString::from(format!("account-pick-{i}"));
             menu = menu.child(keyboard(
                 track_hover(
@@ -827,7 +836,10 @@ impl Launcher {
                                 .rounded(px(8.))
                                 .overflow_hidden()
                                 .child(self.profile_heads.draw(
-                                    Some(who.as_str()),
+                                    match &who {
+                                        Player::Microsoft(uuid) | Player::ElyBy(uuid) => Some(uuid),
+                                        _ => None,
+                                    },
                                     30.,
                                     self.scale,
                                     &t,
@@ -851,7 +863,7 @@ impl Launcher {
                             d.child(ui::icon("tick-02", 16., ui::color(soft)).relative())
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&who);
+                            this.play_as(who.clone());
                             cx.notify();
                         })),
                     id,

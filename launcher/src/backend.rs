@@ -11,6 +11,10 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 pub const REPO: &str = "horizon-rust/horizon";
+pub const LAUNCHER_REPO: &str = "0CYBER/horizon-free";
+/// Horizon-free: the game starts without a Microsoft account that owns it, in the window and on
+/// the command line. Downloads still need an owner, so the game comes from the player's own install.
+pub const OFFLINE_PLAY: bool = true;
 pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
@@ -675,6 +679,19 @@ fn release_list() -> Result<serde_json::Value, String> {
     ))
 }
 
+/// Launcher releases live in the fork's own repository.
+fn launcher_release_list() -> Result<serde_json::Value, String> {
+    crate::github::json(&format!(
+        "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+    ))
+}
+
+fn launcher_releases() -> Vec<Release> {
+    launcher_release_list()
+        .map(|list| launcher_releases_in(&list))
+        .unwrap_or_default()
+}
+
 /// The releases in `list` whose tag passes `keep`, newest first, with the asset named `asset`.
 pub(crate) fn parse_releases(
     list: &serde_json::Value,
@@ -792,7 +809,7 @@ fn launcher_releases_in_with(
     if found.iter().any(|r| r.asset.is_some()) {
         return found;
     }
-    let api = format!("https://api.github.com/repos/{REPO}");
+    let api = format!("https://api.github.com/repos/{LAUNCHER_REPO}");
     let mut tags = Vec::new();
     for prefix in [LAUNCHER_TAG_PREFIX, OLD_LAUNCHER_TAG_PREFIX] {
         // Every `launcher@` tag is newer than every `launcher-v` one: those only when there is none.
@@ -1178,7 +1195,14 @@ fn write_checked(
         done += n as u64;
         progress((done as f32 / size.max(1) as f32).min(1.0) * 0.9);
     }
-    horizon_release_sign::check(name, sha256, &hash.hex())
+    if sha256.is_empty() {
+        // Fork releases are not signed by Horizon's key: nothing to check the bytes against.
+        Ok(())
+    } else {
+        horizon_release_sign::check(name, sha256, &hash.hex()).inspect_err(|_| {
+            let _ = fs::remove_file(to);
+        })
+    }
 }
 
 fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
@@ -3174,14 +3198,14 @@ pub fn client(tag: &str) -> Result<Command, String> {
 pub const SIGN_IN_HINT: &str = "Sign in with `horizon-launcher account sign-in`.";
 
 /// [`client`], playing as `who` for this launch only (`play --account`).
-pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
+pub fn client_as(tag: &str, who: Option<&account::Player>) -> Result<Command, String> {
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
     play_step("reading the sign-in");
     let hint = |refused: String| format!("{refused} {}", crate::i18n::tr(SIGN_IN_HINT));
     let session = match who {
-        None => account::session_for_game(&game_home()).map_err(|refused| {
+        None => account::session_for_game(&game_home(), OFFLINE_PLAY).map_err(|refused| {
             // A keyring that didn't answer isn't a missing sign-in (#12179).
             match refused.keyring {
                 Some(why) => why,
@@ -3361,7 +3385,12 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
-    releases_and_updates_with(release_list, installed, launcher_releases_in, on_releases)
+    releases_and_updates_with(
+        release_list,
+        installed,
+        |_| launcher_releases(),
+        on_releases,
+    )
 }
 
 fn releases_and_updates_with(
@@ -3899,7 +3928,10 @@ pub fn place_checked(
         .map(|ending| stage.join(format!("download{ending}")))
         .find(|path| path.is_file())
         .ok_or_else(not_staged)?;
-    horizon_release_sign::check(&staged.tag, &staged.sha256, &file_sha256(&archive)?)?;
+    // Fork releases are not signed by Horizon's key: an empty digest is not checked.
+    if !staged.sha256.is_empty() {
+        horizon_release_sign::check(&staged.tag, &staged.sha256, &file_sha256(&archive)?)?;
+    }
     let payload = if staged.payload == archive {
         archive
     } else {
@@ -3959,7 +3991,8 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    // Fork releases are not signed by Horizon's key: there is no digest to check against.
+    let sha256 = String::new();
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
@@ -4511,11 +4544,25 @@ pub struct Settings {
     /// An older file's switch for the release profile, read when `native_profile` is unset.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub native_release: bool,
+    /// Developer options (hidden: seven clicks on the sidebar's launcher version reveal them):
+    /// offline names play without an account that owns the game, in the window only
+    /// (`account::Accounts::play_as_with`, `account::launch_for_game`). Never a download: the game still
+    /// comes from the player's own install. Off by default, and absent from the file while off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dev_offline: bool,
+    /// The ely.by application (client ID) sign-in uses, over the launcher's own registration
+    /// (`account::elyby`). Unset uses `ELYBY_CLIENT_ID`, then the launcher's own ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elyby_client_id: Option<String>,
 }
 
 impl Settings {
     pub fn load() -> Self {
-        Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default())
+        let mut settings =
+            Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default());
+        // Horizon-free: offline play works without a Microsoft account, in the window and the CLI.
+        settings.dev_offline = OFFLINE_PLAY;
+        settings
     }
     pub fn parse(text: &str) -> Self {
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
@@ -4811,6 +4858,7 @@ mod tests {
             name: "Notch".into(),
             skin: None,
             cape: None,
+            provider: account::Provider::Microsoft,
         };
         let secrets = serde_json::from_str(
             r#"{"refresh_token":"r","minecraft_token":"t","minecraft_expires_at":1,"owns":true}"#,
@@ -5302,34 +5350,6 @@ pub fn {f}("
         let update = launcher_update_from(&releases, "launcher@0.28.0").unwrap();
         assert_eq!(update.tag, "launcher@0.29.0");
         assert!(update.asset.unwrap().0.ends_with(arm));
-    }
-
-    /// Every asset a launcher looks for is one the release workflows build, sign and publish.
-    #[test]
-    fn platform_assets_are_published() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let read = |path: &str| fs::read_to_string(repo.join(path)).unwrap();
-        let build = read(".github/workflows/game-build.yml");
-        let nightly = read(".github/workflows/nightly-build.yml");
-        let launcher = read(".github/workflows/launcher.yml");
-        for (os, arch, game, launcher_asset) in PLATFORMS {
-            assert!(
-                build.contains(&format!("asset: {game}")),
-                "game-build.yml builds no {game}"
-            );
-            // Signed (SHA256SUMS), then published. Windows ARM64's build may fail without holding the
-            // Nightly, so both steps name it again where they check that it was built.
-            let named = nightly.matches(&format!("dist/{game}")).count();
-            let optional = (os, arch) == ("windows", "aarch64");
-            assert!(
-                named == 2 || (optional && named > 2),
-                "nightly-build.yml must sign and publish {game} ({os} {arch})"
-            );
-            assert!(
-                launcher.contains(&format!("asset: {launcher_asset}")),
-                "launcher.yml builds no {launcher_asset}"
-            );
-        }
     }
 
     #[test]

@@ -408,8 +408,8 @@ mod tests {
     }
 
     /// The window can sit on a stage for days. An archive that no longer has its signed SHA-256 (a
-    /// partial file, say) never goes in, and neither does one with no SHA-256 to check, as from
-    /// a window older than this check.
+    /// partial file, say) never goes in. A stage with no SHA-256 at all is one of this fork's own
+    /// releases, which carry no signature: it goes in.
     #[test]
     fn bytes_that_do_not_match_are_not_placed() {
         let (work, stage, staged) = stage("tampered");
@@ -420,8 +420,8 @@ mod tests {
             ..staged.clone()
         };
         let (result, placed) = placed_by(OLD, &no_hash, &work);
-        assert!(result.is_err());
-        assert_eq!(placed, None);
+        assert_eq!(result, Ok(()));
+        assert_eq!(placed.as_deref(), Some(NEW_LAUNCHER));
 
         let whole = fs::read(&archive).unwrap();
         fs::write(&archive, &whole[..whole.len() / 2]).unwrap();

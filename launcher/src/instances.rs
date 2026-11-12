@@ -714,6 +714,32 @@ fn follow_player(game_home: &Path, home: &Path) {
 mod switch;
 pub use switch::{switch, unkept, Plays, Unkept};
 
+/// The name the game makes up for a new offline player (`horizon-player.txt`): a new one for
+/// every instance, so the name the top bar shows changes at once.
+pub fn new_player_name() -> Result<String, String> {
+    new_player_name_in(&backend::game_home(), &backend::data_dir())
+}
+
+fn new_player_name_in(game_home: &Path, data: &Path) -> Result<String, String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let name = format!(
+        "Player{:05}",
+        (nanos ^ u64::from(std::process::id()).rotate_left(32)) % 100_000
+    );
+    for instance in list_in(game_home, data) {
+        if instance.home.is_dir() {
+            fs::write(
+                instance.home.join("horizon-player.txt"),
+                format!("name:{name}\n"),
+            )
+            .map_err(|e| format!("{}: {e}", instance.home.display()))?;
+        }
+    }
+    Ok(name)
+}
+
 #[cfg(test)]
 #[path = "instances/tests.rs"]
 mod tests;

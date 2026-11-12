@@ -165,7 +165,7 @@ are being closed, list by list: mobs, blocks, items, screens, rendering, servers
 dev = """The port ledger (tools/port_ledger.py, tools/port_map/, #3139) gives every 26.3 method a verdict and links \
 the harnesses that cover it (#3526). The player-visible gaps are ten lists, one per area (#3512 to #3521); a fix \
 translates the vanilla method, ticks its row and carries the `parity` label. Start from \
-.claude/skills/vanilla-parity."""
+the port ledger (python3 tools/port_ledger.py)."""
 links = ["#3512", "#3513", "#3514", "#3515", "#3516", "#3517", "#3518", "#3519", "#3520", "#3521", "#3526", "#3139", "tools/port_ledger.py"]
 
 [[item]]
