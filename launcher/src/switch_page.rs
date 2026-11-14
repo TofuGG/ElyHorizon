@@ -308,4 +308,125 @@ impl Launcher {
         ));
         (rows, n)
     }
+
+    /// Settings' offline names in the glass look's Account plate, under the signed-in accounts:
+    /// each with a head, Play as, Skin… and Forget, the game's own name with New name, then the
+    /// field that adds one. The glass look has no other page for them, so the field is always
+    /// here.
+    pub(super) fn glass_offline_rows(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let now = self.accounts.player();
+        let mut rows = div().flex().flex_col();
+        for (i, name) in self.accounts.offline.clone().into_iter().enumerate() {
+            let plays = now == Player::Offline(name.clone());
+            let mut actions = div().flex().flex_wrap().gap(px(4.));
+            if !plays {
+                let who = Player::Offline(name.clone());
+                actions = actions.child(
+                    button(format!("offline-play-{i}"), "Play as", Kind::Secondary, &t).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.play_as(who.clone());
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            let dressed = name.clone();
+            actions = actions.child(
+                button(format!("offline-skin-{i}"), "Skin…", Kind::Ghost, &t).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.open_skin(dressed.clone());
+                        cx.notify();
+                    }),
+                ),
+            );
+            let forget = name.clone();
+            actions = actions.child(
+                button(format!("offline-forget-{i}"), "Forget", Kind::Ghost, &t).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let mut accounts = Accounts::load();
+                        if accounts
+                            .remove_offline(&forget, &horizon_launcher::skins::dir())
+                            .is_ok()
+                            && accounts.save().is_ok()
+                        {
+                            this.accounts = accounts;
+                        }
+                        cx.notify();
+                    }),
+                ),
+            );
+            rows = rows.child(account_row(
+                Some(self.profile_heads.draw(None, 32., self.scale, &t)),
+                name,
+                Some(
+                    div()
+                        .child(tr(if plays {
+                            "Offline name · plays"
+                        } else {
+                            "Offline name"
+                        }))
+                        .into_any_element(),
+                ),
+                actions,
+            ));
+        }
+        rows = rows.children(self.skin_panel(cx));
+        // The name the game made up can't be forgotten — it's what an offline player is —
+        // only rolled for a new one.
+        if let Some(made_up) = self.offline_name.clone() {
+            let plays = now == Player::GameName;
+            rows = rows.child(account_row(
+                Some(self.profile_heads.draw(None, 32., self.scale, &t)),
+                made_up,
+                Some(
+                    div()
+                        .child(tr(if plays {
+                            "Offline name · the game's own · plays"
+                        } else {
+                            "Offline name · the game's own"
+                        }))
+                        .into_any_element(),
+                ),
+                div().flex().flex_wrap().gap(px(4.)).child(
+                    button("game-name-new", "New name", Kind::Ghost, &t).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            match instances::new_player_name() {
+                                Ok(name) => this.offline_name = Some(name),
+                                Err(e) => {
+                                    this.sign_in_state = Some(SignInState::Done(Err(e)));
+                                }
+                            }
+                            cx.notify();
+                        },
+                    )),
+                ),
+            ));
+        }
+        let add = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(self.field(Field::OfflineName, tr("A name, 3 to 16 letters"), 220., cx))
+            .child(
+                button("offline-add", "Add", Kind::Secondary, &t).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.add_offline_name();
+                        cx.notify();
+                    },
+                )),
+            );
+        rows.child(crate::glass_ui::setting_row_stacked(
+            tr("Offline name"),
+            Some(
+                div()
+                    .child(tr(
+                        "Play offline under another name, and switch from the top bar. Online \
+                         servers don't take offline names.",
+                    ))
+                    .into_any_element(),
+            ),
+            add.into_any_element(),
+        ))
+    }
 }

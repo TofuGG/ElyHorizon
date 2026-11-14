@@ -228,6 +228,10 @@ struct Launcher {
     patch_scroll: Scrollbar,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
+    /// The section a tab of the glass Settings list was clicked for: the list keeps it marked
+    /// while the pane sits at its top, since the spy's reading line slides to the bottom of a
+    /// tall pane and would name the short section after it.
+    settings_clicked: Option<usize>,
     /// The Mods page's project card, kept in view beside its list.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
@@ -591,6 +595,7 @@ impl Launcher {
             settings_pane: gpui::ScrollHandle::new(),
             patch_scroll: Scrollbar::default(),
             settings_marked: 0,
+            settings_clicked: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
             opening: (!settings.skip_opening).then(|| {
@@ -3210,13 +3215,13 @@ impl Launcher {
             }
             foot = foot.child(side);
         }
-        // Horizon-Free: link to the fork's repository.
+        // ElyHorizon: link to the fork's repository.
         foot = foot.child(div().h(px(1.)).w_full().bg(t.rule).my(px(4.)));
         foot = foot.child(link(
-            "horizon-free",
-            "Horizon-Free",
+            "elyhorizon",
+            "ElyHorizon",
             "globe",
-            "https://github.com/0CYBER/horizon-free".to_string(),
+            "https://github.com/TofuGG/ElyHorizon".to_string(),
         ));
         if !self.links.sponsor.is_empty() {
             foot = foot.child(link(

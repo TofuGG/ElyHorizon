@@ -1,10 +1,10 @@
-//! Settings' Account card in the glass look: who plays now (a big head, the name, how) and the
-//! accounts signed in here, in a plate of their own; beside it, the card that signs another
-//! account in — ely.by's, this fork's way of playing, or Microsoft's when the build carries a
-//! client id (`HORIZON_MSA_CLIENT_ID`).
+//! Settings' Account card in the glass look: who plays now (a big head, the name, how), the
+//! accounts signed in here and the offline names kept beside them, in a plate of their own;
+//! beside it, the card that signs another account in — ely.by's, this fork's way of playing, or
+//! Microsoft's when the build carries a client id (`HORIZON_MSA_CLIENT_ID`).
 //!
 //! Not in the mockup, kept in its patterns: the accounts' Play as, Refresh and Sign out, the
-//! sign-in's code, progress and problems.
+//! offline names' Play as, Skin… and Forget, the sign-in's code, progress and problems.
 
 use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
@@ -66,22 +66,28 @@ impl Launcher {
     /// side is the accounts rather than empty glass.
     fn glass_who_plays(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let (uuid, name, how) = match self.accounts.selected() {
-            Some(a) => {
-                let how = match a.provider {
-                    account::Provider::ElyBy => {
+        // Who plays, offline names too: the plate lists them under the signed-in accounts, so
+        // the head and the name say which offline name plays rather than "No account".
+        let (uuid, name, how) = match self.accounts.player() {
+            account::Player::Microsoft(uuid) | account::Player::ElyBy(uuid) => {
+                let account = self.accounts.selected();
+                let how = match account.map(|a| a.provider) {
+                    Some(account::Provider::ElyBy) => {
                         (Tone::Live, tr("ely.by account · online servers too"))
                     }
-                    account::Provider::Microsoft => {
-                        (Tone::Live, tr("Microsoft account · online servers too"))
-                    }
+                    _ => (Tone::Live, tr("Microsoft account · online servers too")),
                 };
-                (Some(a.uuid.clone()), a.name.clone(), how)
+                (
+                    Some(uuid),
+                    account.map_or_else(String::new, |a| a.name.clone()),
+                    how,
+                )
             }
-            None => (
+            account::Player::Offline(name) => (None, name, (Tone::Off, tr("Offline"))),
+            account::Player::GameName => (
                 None,
-                tr("No account").to_string(),
-                (Tone::Off, tr("Sign in to play")),
+                self.offline_name.clone().unwrap_or_else(|| "Player".into()),
+                (Tone::Off, tr("Offline")),
             ),
         };
         let head = div()
@@ -124,18 +130,31 @@ impl Launcher {
                         ),
                 ),
         );
-        let rows = if self.accounts.accounts.is_empty() {
-            None
-        } else {
-            Some(ui::flat_rows(|| self.microsoft_rows(cx)).0)
-        };
+        let has_accounts = !self.accounts.accounts.is_empty();
+        // The signed-in accounts, then the offline names under them, in one set of rows so both
+        // keep the plate's edge.
+        let list = ui::flat_rows(|| {
+            let mut list = div().flex().flex_col();
+            if has_accounts {
+                list = list.child(self.microsoft_rows(cx).0);
+            }
+            let offline = self.glass_offline_rows(cx);
+            if has_accounts {
+                list = list
+                    .child(div().h(px(1.)).mx(px(16.)).my(px(8.)).bg(ui::white(0.08)))
+                    .child(offline);
+            } else {
+                list = list.child(offline);
+            }
+            list
+        });
         div()
             .flex()
             .flex_col()
             .child(hero)
             // The rows keep the plate's own 24 px edge: their 16 px inset and a pull of 16 line
             // the account's name up with the player's.
-            .children(rows.map(|rows| rows.mx(px(-16.)).mt(px(20.)).mb(px(-8.))))
+            .child(list.mx(px(-16.)).mt(px(20.)).mb(px(-8.)))
     }
 
     /// Signing an account in: the mark, what the card is for, the button that starts it and where

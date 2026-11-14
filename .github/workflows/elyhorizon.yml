@@ -95,13 +95,14 @@ jobs:
         run: |
           out=$("$BIN/${{ matrix.binary }}" --version)
           echo "$out"
-          expected=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          # The fork's own version: Cargo's three numbers and the release on them (0.2.98.2).
+          expected=$(sed -n 's/^pub const FORK_VERSION: &str = "\(.*\)";/\1/p' src/backend.rs)
           [[ "$out" == "horizon-launcher $expected" ]] || {
             echo "::error::expected horizon-launcher $expected"; exit 1; }
       - name: Package
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          version=$(sed -n 's/^pub const FORK_VERSION: &str = "\(.*\)";/\1/p' src/backend.rs)
           rm -rf dist out && mkdir -p dist out
           cp "$BIN/${{ matrix.binary }}" dist/
           if [[ "$RUNNER_OS" == "Linux" ]]; then

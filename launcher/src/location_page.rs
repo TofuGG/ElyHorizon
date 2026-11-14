@@ -201,6 +201,10 @@ impl Launcher {
                 this.choose_location(cx);
             }))
         };
+        let flat = glass_ui::flat();
+        // In a Settings card the row insets its text by 16 px; what sits under the row takes the
+        // same inset, so the notes line up with the name above them.
+        let inset = move |d: Div| if flat { d.px(px(16.)) } else { d };
         let mut body = div()
             .flex()
             .flex_col()
@@ -223,21 +227,21 @@ impl Launcher {
                 ),
                 &t,
             ))
-            .child(text(theme::CAPTION).text_color(t.muted).child(tr(
+            .child(inset(text(theme::CAPTION).text_color(t.muted).child(tr(
                 "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.",
-            ).to_string()))
-            .child(text(theme::CAPTION).text_color(t.muted).child(tr(
+            ).to_string())))
+            .child(inset(text(theme::CAPTION).text_color(t.muted).child(tr(
                 "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",
-            ).to_string()))
-            .children(blocked.map(|message| text(theme::CAPTION).text_color(t.warn).child(message)))
+            ).to_string())))
+            .children(blocked.map(|message| inset(text(theme::CAPTION).text_color(t.warn).child(message))))
             .children(self.location_note.as_ref().map(|message| {
-                text(theme::CAPTION).text_color(t.ink).child(message.clone())
+                inset(text(theme::CAPTION).text_color(t.ink).child(message.clone()))
             }))
             .children(self.location_error.as_ref().map(|message| {
-                text(theme::CAPTION).text_color(t.danger).child(message.clone())
+                inset(text(theme::CAPTION).text_color(t.danger).child(message.clone()))
             }));
         if horizon_launcher::data_location::startup_error().is_some() {
-            body = body.child(
+            body = body.child(inset(
                 div()
                     .flex()
                     .gap(px(8.))
@@ -259,7 +263,7 @@ impl Launcher {
                             },
                         )),
                     ),
-            );
+            ));
         }
         if let Some(target) = &self.location_target {
             let confirm = button("confirm-move-data", "Move and restart", Kind::Primary, &t);
@@ -270,7 +274,7 @@ impl Launcher {
                     this.confirm_location(cx);
                 }))
             };
-            body = body.child(
+            body = body.child(inset(
                 div()
                     .flex()
                     .flex_col()
@@ -290,7 +294,7 @@ impl Launcher {
                             }),
                         ),
                     )),
-            );
+            ));
         }
         body.mb(px(16.))
     }

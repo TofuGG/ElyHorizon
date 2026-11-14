@@ -374,41 +374,43 @@ impl Launcher {
             Some(actions.into_any_element()),
             &t,
         ));
+        // The switches inset their text by 16 px, as every Settings row does; the heading, the
+        // notes and the captions take the same inset so the whole section reads from one left
+        // edge. In a Settings card the section also starts where the rows of the cards above it
+        // do, one row's padding below the card's own.
+        let flat = glass_ui::flat();
+        let inset = move |d: Div| if flat { d.px(px(16.)) } else { d };
         div()
             .flex()
             .flex_col()
             .gap(px(16.))
-            .child(
+            .when(flat, |d| d.pt(px(16.)))
+            .child(inset(
                 text(theme::HEADING)
                     .text_color(t.ink)
                     .child(tr("Data collection")),
-            )
-            .child(
+            ))
+            .child(inset(
                 text(theme::UI)
-                    .max_w(px(600.))
                     .text_color(t.muted)
                     .child(tr(
                         "Each switch is off unless you turn it on. What it sends is below it; the privacy page on playhorizon.dev says how long it is kept.",
                     )),
-            )
+            ))
             .child(list)
-            .child(
+            .child(inset(
                 text(theme::CAPTION)
-                    .max_w(px(600.))
                     .text_color(t.muted)
                     .child(tr(telemetry::NEVER)),
-            )
+            ))
             .children(
                 self.collection
                     .note
                     .clone()
-                    .map(|n| text(theme::UI).text_color(t.ink).child(n)),
+                    .map(|n| inset(text(theme::UI).text_color(t.ink).child(n))),
             )
-            .children(
-                self.collection
-                    .view
-                    .as_ref()
-                    .map(|v| json_view(v, &t, &self.collection.json_scroll)),
-            )
+            .children(self.collection.view.as_ref().map(|v| {
+                inset(json_view(v, &t, &self.collection.json_scroll))
+            }))
     }
 }

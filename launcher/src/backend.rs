@@ -11,7 +11,10 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 pub const REPO: &str = "horizon-rust/horizon";
-pub const LAUNCHER_REPO: &str = "0CYBER/horizon-free";
+/// Launcher releases live in this fork's own repository. It publishes none under a launcher tag
+/// (`launcher@X.Y.Z`), so this build never offers to replace itself with another repository's
+/// launcher: its own updates come from its release page.
+pub const LAUNCHER_REPO: &str = "TofuGG/ElyHorizon";
 /// Horizon-free: the game starts without a Microsoft account that owns it, in the window and on
 /// the command line. Downloads still need an owner, so the game comes from the player's own install.
 pub const OFFLINE_PLAY: bool = true;
@@ -19,8 +22,14 @@ pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
 /// This launcher's version: the release workflow sets `HORIZON_LAUNCHER_VERSION` from the
-/// tag it builds (no version-bump commits); other builds say Cargo.toml's.
+/// tag it builds (no version-bump commits); other builds say the fork's own ([`FORK_VERSION`]).
 pub const VERSION: &str = version_or(option_env!("HORIZON_LAUNCHER_VERSION"));
+/// ElyHorizon's own version: the Horizon launcher version it is built from, then this fork's
+/// release on it. `0.2.98.3` is the fork's third release on launcher 0.2.98, the next one on it
+/// is `0.2.98.4`, and a move to launcher 0.2.99 starts again at `0.2.99.1`. The release tag
+/// carries the same pair (`v0.2.98-ely-v3`). Cargo needs a semver version, so Cargo.toml keeps
+/// the three numbers and this fourth one lives here.
+pub const FORK_VERSION: &str = "0.2.98.3";
 /// Launcher releases are tagged `launcher@X.Y.Z` from 0.2 on (docs/versioning.md), and Horizon's
 /// own `vX.Y.Z`. Before 0.2 they were `launcher-vX.Y.Z` and `vYYYY.MM.DD[.N]`: every 0.2 tag is
 /// newer than every one of those ([`release_order`]).
@@ -31,7 +40,7 @@ pub const OLD_LAUNCHER_TAG_PREFIX: &str = "launcher-v";
 const fn version_or(injected: Option<&'static str>) -> &'static str {
     match injected {
         Some(v) if !v.is_empty() => v,
-        _ => env!("CARGO_PKG_VERSION"),
+        _ => FORK_VERSION,
     }
 }
 
@@ -573,7 +582,7 @@ fn own_tag_of(tag: Option<&str>, injected: Option<&str>) -> String {
     ) {
         (Some(tag), _) => tag.to_string(),
         (None, Some(version)) => format!("{OLD_LAUNCHER_TAG_PREFIX}{version}"),
-        (None, None) => format!("{LAUNCHER_TAG_PREFIX}{}", env!("CARGO_PKG_VERSION")),
+        (None, None) => format!("{LAUNCHER_TAG_PREFIX}{FORK_VERSION}"),
     }
 }
 
@@ -586,7 +595,10 @@ fn own_tag_of(tag: Option<&str>, injected: Option<&str>) -> String {
 pub enum ReleaseOrder {
     /// Numbers without trailing zeros, so 1.2 and 1.2.0 are equal.
     Before02(Vec<u64>),
-    Semver([u64; 3], Prerelease),
+    /// `MAJOR.MINOR.PATCH`, then the fork's release on that version (`0.2.98.2`; a plain
+    /// `0.2.98` is `0.2.98.0`), so the fork's next release outranks this one and launcher 0.2.99
+    /// outranks both.
+    Semver([u64; 4], Prerelease),
     /// A Nightly (`nightly-<date>-<commit>`), by its date: newer than every release, since the
     /// Nightly is the only build Horizon ships.
     Nightly(String),
@@ -633,17 +645,21 @@ pub fn release_order(tag: &str) -> ReleaseOrder {
     })
 }
 
-/// `MAJOR.MINOR.PATCH[-PRE]` with a major below [`FIRST_YEAR`], or None.
+/// `MAJOR.MINOR.PATCH[-PRE]`, or that plus the fork's release (`0.2.98.2`), with a major below
+/// [`FIRST_YEAR`], or None.
 fn semver_order(version: &str) -> Option<ReleaseOrder> {
     let (core, pre) = match version.split_once('-') {
         Some((core, pre)) => (core, Some(pre)),
         None => (version, None),
     };
-    let numbers: Vec<u64> = core
+    let mut numbers: Vec<u64> = core
         .split('.')
         .map(|n| n.parse().ok())
         .collect::<Option<_>>()?;
-    let &[major, minor, patch] = numbers.as_slice() else {
+    if numbers.len() == 3 {
+        numbers.push(0);
+    }
+    let &[major, minor, patch, fork] = numbers.as_slice() else {
         return None;
     };
     if major >= FIRST_YEAR {
@@ -663,7 +679,7 @@ fn semver_order(version: &str) -> Option<ReleaseOrder> {
                 .collect::<Option<_>>()?,
         ),
     };
-    Some(ReleaseOrder::Semver([major, minor, patch], pre))
+    Some(ReleaseOrder::Semver([major, minor, patch, fork], pre))
 }
 
 /// Compares two tags or versions by [`release_order`].
@@ -5698,13 +5714,20 @@ pub fn {f}("
     #[test]
     fn the_version_is_the_one_the_release_workflow_injects() {
         assert_eq!(version_or(Some("0.4.2")), "0.4.2");
-        assert_eq!(version_or(Some("")), env!("CARGO_PKG_VERSION"));
-        assert_eq!(version_or(None), env!("CARGO_PKG_VERSION"));
+        // A build from source is the fork's own version: Cargo's three numbers and the release
+        // on them, so the two cannot drift apart.
+        assert_eq!(version_or(Some("")), FORK_VERSION);
+        assert_eq!(version_or(None), FORK_VERSION);
+        assert!(
+            FORK_VERSION.starts_with(concat!(env!("CARGO_PKG_VERSION"), ".")),
+            "{FORK_VERSION} does not start with Cargo.toml's {}",
+            env!("CARGO_PKG_VERSION")
+        );
         assert_eq!(
             VERSION,
             option_env!("HORIZON_LAUNCHER_VERSION")
                 .filter(|v| !v.is_empty())
-                .unwrap_or(env!("CARGO_PKG_VERSION"))
+                .unwrap_or(FORK_VERSION)
         );
         // Self-update compares releases with that version: this launcher's own release is no update.
         let r = |tag: String| Release {
@@ -5771,11 +5794,8 @@ pub fn {f}("
         );
         assert_eq!(own_tag_of(None, Some("0.16.0")), "launcher-v0.16.0");
         assert_eq!(own_tag_of(Some(""), Some("0.16.0")), "launcher-v0.16.0");
-        // A build from source is on the 0.2 line.
-        assert_eq!(
-            own_tag_of(None, None),
-            format!("launcher@{}", env!("CARGO_PKG_VERSION"))
-        );
+        // A build from source is on the fork's own line.
+        assert_eq!(own_tag_of(None, None), format!("launcher@{FORK_VERSION}"));
     }
 
     /// The update path to 0.2 (docs/versioning.md): launchers from before it take the last
@@ -6078,6 +6098,17 @@ pub fn {f}("
             Greater
         );
         assert_eq!(compare_versions("launcher@0.2.0", "v0.2.0"), Equal);
+        // The fork's release on a launcher version (ElyHorizon's `0.2.98.2`): above that
+        // version, below the next release on it and below the next launcher version.
+        assert_eq!(compare_versions("0.2.98.2", "0.2.98"), Greater);
+        assert_eq!(compare_versions("0.2.98.2", "0.2.98.1"), Greater);
+        assert_eq!(compare_versions("0.2.98.10", "0.2.98.9"), Greater);
+        assert_eq!(compare_versions("0.2.99", "0.2.98.2"), Greater);
+        assert_eq!(compare_versions("0.2.98.2", "0.2.98.2"), Equal);
+        assert_eq!(
+            compare_versions("launcher@0.2.98.2", "launcher@0.2.64"),
+            Greater
+        );
 
         let asset = ASSET.unwrap_or("horizon-linux-x86_64.tar.gz");
         let list = serde_json::json!([

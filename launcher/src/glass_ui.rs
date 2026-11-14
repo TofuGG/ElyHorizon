@@ -123,9 +123,10 @@ pub fn setting_row(
                         .child(title),
                 )
                 .children(note.map(|n| {
+                    // As wide as the card leaves beside the control, so a long note wraps at the
+                    // control instead of stopping short of it.
                     text(13., FontWeight::NORMAL, 0.6)
                         .line_height(px(19.5))
-                        .max_w(px(560.))
                         .child(n)
                 })),
         )

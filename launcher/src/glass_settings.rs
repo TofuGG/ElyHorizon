@@ -101,50 +101,58 @@ impl Launcher {
         let active = self.settings_section(sections.len());
         self.settings_marked = active;
         let wide = self.window_width >= crate::glass_home::COMPACT;
-        let items: Vec<_> = SECTIONS
-            .iter()
-            .enumerate()
-            .map(|(i, &(label, icon))| {
-                let on = i == active;
-                keyboard(
-                    div()
-                        .id(SharedString::from(format!("settings-nav-{i}")))
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(if wide { 12. } else { 8. }))
-                        .h(px(if wide { 40. } else { 34. }))
-                        .px(px(if wide { 12. } else { 10. }))
-                        .rounded(px(radius::ROW))
-                        .cursor_pointer()
-                        .font_family(horizon_theme::glass::FONT)
-                        .text_size(px(14.))
-                        .when(on, |d| {
-                            d.bg(white(fill::ACTIVE))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(white(ink::FULL))
-                        })
-                        .when(!on, |d| {
-                            d.text_color(white(0.65))
-                                .hover(|s| s.bg(white(0.05)).text_color(white(ink::FULL)))
-                        })
-                        .child(ui::icon(
-                            icon,
-                            17.,
-                            if on {
-                                ui::color(ui::look().accent_soft)
-                            } else {
-                                white(0.65)
-                            },
-                        ))
-                        .child(tr(label).to_string()),
-                    &t,
-                )
+        // A section's tab: its icon always, its name only where there is room for it — the
+        // column at a wide window, and the strip's marked tab. The strip's others share the bar
+        // between them, so the list fills it evenly however wide the window is.
+        let tab = |i: usize, (label, icon): (&'static str, &'static str), named: bool| {
+            let on = i == active;
+            let mut tab = div()
+                .id(SharedString::from(format!("settings-nav-{i}")))
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(if wide { 40. } else { 38. }))
+                .rounded(px(radius::ROW))
+                .cursor_pointer()
+                .font_family(horizon_theme::glass::FONT)
+                .text_size(px(14.))
+                .when(on, |d| {
+                    d.bg(white(fill::ACTIVE))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(white(ink::FULL))
+                })
+                .when(!on, |d| {
+                    d.text_color(white(0.65))
+                        .hover(|s| s.bg(white(0.05)).text_color(white(ink::FULL)))
+                })
+                .child(ui::icon(
+                    icon,
+                    17.,
+                    if on {
+                        ui::color(ui::look().accent_soft)
+                    } else {
+                        white(0.65)
+                    },
+                ));
+            tab = if named {
+                tab.gap(px(if wide { 12. } else { 8. }))
+                    .px(px(if wide { 12. } else { 14. }))
+                    .child(tr(label).to_string())
+            } else {
+                tab.flex_1().justify_center()
+            };
+            keyboard(tab, &t)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.settings_clicked = Some(i);
                     this.settings_pane.scroll_to_top_of_item(i);
                     cx.notify();
                 }))
-            })
+                .into_any_element()
+        };
+        let items: Vec<_> = SECTIONS
+            .iter()
+            .enumerate()
+            .map(|(i, &section)| tab(i, section, wide || i == active))
             .collect();
         let nav = if wide {
             card()
@@ -154,13 +162,15 @@ impl Launcher {
                 .children(items)
                 .into_any_element()
         } else {
+            // `flex_row` sets the direction alone; the plate must be a flex box for it to read,
+            // or its items stack as a block's children do.
             crate::glass::plate(radius::PANEL)
                 .id("settings-nav-strip")
+                .flex()
                 .flex_none()
                 .w_full()
                 .flex_row()
-                .overflow_x_scroll()
-                .on_scroll(|_, _, cx| cx.stop_propagation())
+                .items_center()
                 .gap(px(4.))
                 .p(px(6.))
                 .children(items)
@@ -232,6 +242,14 @@ impl Launcher {
             .map_while(|i| self.settings_pane.bounds_for_item(i))
             .map(|b| f32::from(b.top() - pane.top() - scrolled))
             .collect();
+        // A tab just clicked keeps its mark while the pane sits at that section's top: the spy's
+        // line slides to the bottom of a tall pane, so it would name the short section below it.
+        // Scrolling the pane away moves the section's top and gives the spy back its say.
+        if let Some(i) = self.settings_clicked {
+            if tops.get(i).is_some_and(|&top| (-6. ..=48.).contains(&top)) {
+                return i;
+            }
+        }
         spy(
             &tops,
             f32::from(pane.size.height),
